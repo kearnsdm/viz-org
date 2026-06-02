@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { formatDuration, projectMinutes, projectWeight, useStore } from "../store";
+import { TaskEditDialog } from "./TaskEditDialog";
 import type { Task, Urgency } from "../types";
 
 const URGENCIES: Urgency[] = ["low", "normal", "high", "urgent"];
@@ -16,7 +17,7 @@ export const DURATIONS: { label: string; min: number }[] = [
   { label: "1 day", min: 480 },
 ];
 
-function TaskRow({ projectId, task }: { projectId: string; task: Task }) {
+function TaskRow({ projectId, task, onEdit }: { projectId: string; task: Task; onEdit: () => void }) {
   const { dispatch, state } = useStore();
   const overdue = task.due && !task.done && task.due < new Date().toISOString().slice(0, 10);
 
@@ -95,6 +96,9 @@ function TaskRow({ projectId, task }: { projectId: string; task: Task }) {
               </option>
             ))}
         </select>
+        <button className="icon-btn" title="Edit / postpone" onClick={onEdit}>
+          ✏️
+        </button>
         <button
           className="icon-btn"
           title="Delete task"
@@ -114,6 +118,7 @@ export function ProjectPanel({ projectId, onClose }: { projectId: string; onClos
   const [urgency, setUrgency] = useState<Urgency>("normal");
   const [due, setDue] = useState("");
   const [est, setEst] = useState("");
+  const [editTaskId, setEditTaskId] = useState<string | null>(null);
 
   if (!project) return null;
 
@@ -212,7 +217,7 @@ export function ProjectPanel({ projectId, onClose }: { projectId: string; onClos
           {openTasks.length > 0 && (
             <ul className="task-list">
               {openTasks.map((t) => (
-                <TaskRow key={t.id} projectId={projectId} task={t} />
+                <TaskRow key={t.id} projectId={projectId} task={t} onEdit={() => setEditTaskId(t.id)} />
               ))}
             </ul>
           )}
@@ -226,7 +231,7 @@ export function ProjectPanel({ projectId, onClose }: { projectId: string; onClos
               <summary>{doneTasks.length} completed</summary>
               <ul className="task-list">
                 {doneTasks.map((t) => (
-                  <TaskRow key={t.id} projectId={projectId} task={t} />
+                  <TaskRow key={t.id} projectId={projectId} task={t} onEdit={() => setEditTaskId(t.id)} />
                 ))}
               </ul>
             </details>
@@ -248,6 +253,14 @@ export function ProjectPanel({ projectId, onClose }: { projectId: string; onClos
               Delete project
             </button>
           </div>
+        )}
+
+        {editTaskId && project.tasks.find((t) => t.id === editTaskId) && (
+          <TaskEditDialog
+            projectId={projectId}
+            task={project.tasks.find((t) => t.id === editTaskId)!}
+            onClose={() => setEditTaskId(null)}
+          />
         )}
       </div>
     </div>

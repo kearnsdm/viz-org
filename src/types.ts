@@ -67,6 +67,19 @@ export interface AppState {
   inbox: CandidateTask[];
   /** Token-economy / motivation state. Optional so older saves still load. */
   game?: GameState;
+  /** Today's committed plan: the locked frog + heavy picks. */
+  day?: DayPlan;
+}
+
+export interface DayPlan {
+  /** yyyy-mm-dd this plan is for. */
+  date: string;
+  /** Once started, the frog + heavy picks are locked for the day. */
+  started: boolean;
+  /** The chosen "frog" (do-first) task id. */
+  frogTaskId?: string;
+  /** Heavy task ids locked in at start — can't be un-flagged today. */
+  lockedHeavy: string[];
 }
 
 export interface GameState {

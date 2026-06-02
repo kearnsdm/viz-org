@@ -1,5 +1,14 @@
 import { useState } from "react";
-import { buildDailyPlan, formatDuration, useStore, type PlanItem } from "../store";
+import {
+  buildDailyPlan,
+  dayFrogId,
+  findTaskItem,
+  formatDuration,
+  isDayStarted,
+  lockedHeavyIds,
+  useStore,
+  type PlanItem,
+} from "../store";
 import {
   BADGES,
   POINTS_PER_CREDIT,
@@ -11,6 +20,7 @@ import {
 } from "../game";
 import { FocusTimer } from "./FocusTimer";
 import { UnstickPanel } from "./UnstickPanel";
+import { TaskEditDialog } from "./TaskEditDialog";
 
 function pickFrog(plan: PlanItem[]): PlanItem | null {
   if (plan.length === 0) return null;
@@ -24,17 +34,24 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
   const game = withGame(state.game);
   const plan = buildDailyPlan(state);
   const todayStr = new Date().toISOString().slice(0, 10);
-  const frog = pickFrog(plan);
   const credits = availableCredits(game);
   const pct = Math.round(((POINTS_PER_CREDIT - pointsToNextCredit(game)) / POINTS_PER_CREDIT) * 100);
   const totalMinutes = plan.reduce((s, { task }) => s + (task.estimateMinutes ?? 0), 0);
 
+  const started = isDayStarted(state);
+  const locked = lockedHeavyIds(state);
+  const frogId = dayFrogId(state);
+  const frog = (frogId && findTaskItem(state, frogId)) || (!started ? pickFrog(plan) : null);
+
   const [timer, setTimer] = useState<{ title: string } | null>(null);
   const [stuck, setStuck] = useState<PlanItem | null>(null);
+  const [edit, setEdit] = useState<PlanItem | null>(null);
 
   const row = (item: PlanItem, isFrog = false) => {
     const { task, project } = item;
     const overdue = task.due && task.due < todayStr;
+    const heavyLocked = started && locked.includes(task.id);
+    const isChosenFrog = frogId === task.id;
     return (
       <li key={task.id} className={`plan-item ${isFrog ? "is-frog" : ""}`}>
         <input
@@ -65,15 +82,28 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
           {task.firstStep && <span className="first-step muted">▶ first move: {task.firstStep}</span>}
         </div>
         <div className="plan-item__actions">
+          {!started && (
+            <button
+              className={`icon-btn ${isChosenFrog ? "is-on" : ""}`}
+              title={isChosenFrog ? "This is your frog" : "Make this the frog"}
+              onClick={() => dispatch({ type: "chooseFrog", taskId: task.id })}
+            >
+              🐸
+            </button>
+          )}
           <button
             className={`icon-btn ${task.heavy ? "is-on" : ""}`}
-            title={task.heavy ? "Heavy (bonus points)" : "Mark heavy"}
+            title={heavyLocked ? "Heavy — locked for today" : task.heavy ? "Heavy (bonus points)" : "Mark heavy"}
+            disabled={heavyLocked}
             onClick={() => dispatch({ type: "setHeavy", projectId: project.id, taskId: task.id, heavy: !task.heavy })}
           >
             🔥
           </button>
+          <button className="icon-btn" title="Edit / postpone" onClick={() => setEdit(item)}>
+            ✏️
+          </button>
           <button className="btn btn-sm btn-ghost" onClick={() => setStuck(item)}>
-            I'm stuck
+            Stuck
           </button>
           <button className="btn btn-sm" onClick={() => setTimer({ title: task.title })}>
             Start
@@ -85,7 +115,32 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
 
   return (
     <div className="today">
-      {/* Build Credits — the reward */}
+      {/* Day commitment bar */}
+      <div className={`card day-bar ${started ? "is-locked" : ""}`}>
+        {started ? (
+          <>
+            <div>
+              <strong>🔒 Day locked in.</strong>{" "}
+              <span className="muted">Your frog and heavy picks are set — no wriggling out now.</span>
+            </div>
+            <button className="btn btn-sm btn-ghost" onClick={() => dispatch({ type: "resetDay" })}>
+              Re-plan day
+            </button>
+          </>
+        ) : (
+          <>
+            <div>
+              <strong>Set up your day.</strong>{" "}
+              <span className="muted">Flag what's truly heavy (🔥), pick your frog (🐸), adjust dates/priority — then commit.</span>
+            </div>
+            <button className="btn btn-sm btn-primary" onClick={() => dispatch({ type: "startDay" })}>
+              Start my day 🔒
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Build Credits */}
       <div className="card credit-card">
         <div className="card__header">
           <h2>Build Bank</h2>
@@ -107,12 +162,12 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
         {credits >= 1 && <p className="redeem-note">🛠️ You've earned it — bring a build session to our next chat.</p>}
       </div>
 
-      {/* Today's frog */}
+      {/* Frog */}
       {frog && (
         <div className="card frog-card">
           <div className="card__header">
-            <h2>🐸 Today's frog</h2>
-            <span className="muted">do the heaviest thing first</span>
+            <h2>🐸 {started ? "Today's frog" : "Frog (suggested)"}</h2>
+            <span className="muted">{started ? "do this first" : "tap 🐸 on any task to pick your own"}</span>
           </div>
           <ul className="plan-list">{row(frog, true)}</ul>
         </div>
@@ -165,6 +220,7 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
           }}
         />
       )}
+      {edit && <TaskEditDialog projectId={edit.project.id} task={edit.task} onClose={() => setEdit(null)} />}
     </div>
   );
 }

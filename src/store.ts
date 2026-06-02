@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 import type { AppState, CandidateTask, Project, Task, Urgency } from "./types";
-import { availableCredits, completeFocus, completeTask, emptyGame, withGame } from "./game";
+import { availableCredits, completeFocus, completeTask, emptyGame, taskPoints, withGame } from "./game";
 
 const STORAGE_KEY = "viz-org-state-v1";
 
@@ -192,6 +192,9 @@ export type Action =
   | { type: "setFirstStep"; projectId: string; taskId: string; firstStep: string }
   | { type: "focusComplete" }
   | { type: "redeemCredit" }
+  | { type: "chooseFrog"; taskId: string }
+  | { type: "startDay" }
+  | { type: "resetDay" }
   | { type: "moveTask"; taskId: string; fromProjectId: string; toProjectId: string }
   | { type: "pullEmail"; candidates: CandidateTask[] }
   | { type: "fileCandidate"; candidateId: string; projectId: string }
@@ -253,11 +256,32 @@ export function reducer(state: AppState, action: Action): AppState {
       const { game, awarded } = completeTask(withGame(state.game), task);
       return { ...next, game: { ...game, lastAward: { points: awarded, at: Date.now() } } };
     }
-    case "setHeavy":
+    case "setHeavy": {
+      // Once the day is started, a locked-heavy task can't be un-flagged.
+      if (!action.heavy && isDayStarted(state) && (state.day?.lockedHeavy ?? []).includes(action.taskId)) {
+        return state;
+      }
       return mapProject(state, action.projectId, (p) => ({
         ...p,
         tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, heavy: action.heavy } : t)),
       }));
+    }
+    case "chooseFrog": {
+      const date = today();
+      if (state.day?.date === date && state.day.started) return state; // locked once started
+      return { ...state, day: { date, started: false, frogTaskId: action.taskId, lockedHeavy: [] } };
+    }
+    case "startDay": {
+      const date = today();
+      const sameDay = state.day?.date === date;
+      const frogTaskId = sameDay && state.day?.frogTaskId ? state.day.frogTaskId : autoFrogId(state);
+      const lockedHeavy = state.projects.flatMap((p) =>
+        p.tasks.filter((t) => t.heavy && !t.done).map((t) => t.id),
+      );
+      return { ...state, day: { date, started: true, frogTaskId, lockedHeavy } };
+    }
+    case "resetDay":
+      return { ...state, day: undefined };
     case "setFirstStep":
       return mapProject(state, action.projectId, (p) => ({
         ...p,
@@ -424,6 +448,40 @@ export function importBoard(code: string): AppState {
     state.projects.push({ id: uid("proj"), name: "Admin", color: "#64748b", capacity: 3, isAdmin: true, tasks: [] });
   }
   return state as AppState;
+}
+
+// --- Day plan (the committed frog + heavy picks) -------------------------
+
+export function isDayStarted(state: AppState): boolean {
+  return !!state.day && state.day.started && state.day.date === today();
+}
+
+/** The chosen frog task id for today, if any. */
+export function dayFrogId(state: AppState): string | undefined {
+  return state.day && state.day.date === today() ? state.day.frogTaskId : undefined;
+}
+
+/** Heavy task ids locked for today (can't be un-flagged). */
+export function lockedHeavyIds(state: AppState): string[] {
+  return isDayStarted(state) ? state.day?.lockedHeavy ?? [] : [];
+}
+
+/** Find a task + its project anywhere on the board. */
+export function findTaskItem(state: AppState, taskId: string): PlanItem | null {
+  for (const project of state.projects) {
+    const task = project.tasks.find((t) => t.id === taskId);
+    if (task) return { task, project };
+  }
+  return null;
+}
+
+/** Auto-pick a frog: the heaviest (or otherwise highest-value) pressing task. */
+function autoFrogId(state: AppState): string | undefined {
+  const plan = buildDailyPlan(state);
+  if (plan.length === 0) return undefined;
+  const heavy = plan.filter((i) => i.task.heavy);
+  const pool = heavy.length ? heavy : plan;
+  return [...pool].sort((a, b) => taskPoints(b.task) - taskPoints(a.task))[0]?.task.id;
 }
 
 // --- Daily plan ----------------------------------------------------------
