@@ -438,6 +438,11 @@ body {
   opacity: 0.35;
   filter: grayscale(1);
 }
+.badge.secret {
+  opacity: 0.55;
+  filter: none;
+  border-style: dashed;
+}
 .badge__emoji {
   font-size: 22px;
 }
@@ -511,6 +516,23 @@ body {
     transform: translateX(-50%) scale(1);
     opacity: 1;
   }
+}
+.toast-badge {
+  bottom: 72px;
+  background: linear-gradient(90deg, #6366f1, #ec4899);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  font-weight: 500;
+  max-width: 320px;
+}
+.toast-badge__emoji {
+  font-size: 26px;
+}
+.toast-badge .muted {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
 }
 
 /* ---- Daily plan ---- */

@@ -97,6 +97,10 @@ export interface GameState {
   /** Points earned so far today, and the day they belong to. */
   pointsToday: number;
   todayDate?: string;
+  /** Per-day counters (reset each day) for streaky / easter-egg badges. */
+  tasksToday: number;
+  heavyToday: number;
+  focusToday: number;
   /** Best single-day point total. */
   bestDayPoints: number;
   /** Earned badge ids. */
@@ -105,4 +109,6 @@ export interface GameState {
   awardedTaskIds: string[];
   /** Transient: the most recent award, for showing a points toast. */
   lastAward?: { points: number; at: number };
+  /** Transient: the most recently unlocked badge, for a celebratory toast. */
+  lastBadge?: { id: string; at: number };
 }

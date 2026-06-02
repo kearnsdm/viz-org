@@ -198,6 +198,14 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
         <div className="badge-grid">
           {BADGES.map((b) => {
             const earned = game.badges.includes(b.id);
+            if (b.secret && !earned) {
+              return (
+                <div key={b.id} className="badge locked secret" title="Hidden — keep going to find it">
+                  <span className="badge__emoji">❓</span>
+                  <span className="badge__label">Secret</span>
+                </div>
+              );
+            }
             return (
               <div key={b.id} className={`badge ${earned ? "earned" : "locked"}`} title={b.hint}>
                 <span className="badge__emoji">{b.emoji}</span>

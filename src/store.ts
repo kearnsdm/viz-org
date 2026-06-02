@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 import type { AppState, CandidateTask, Project, Task, Urgency } from "./types";
-import { availableCredits, completeFocus, completeTask, emptyGame, taskPoints, withGame } from "./game";
+import { addBadges, availableCredits, completeFocus, completeTask, emptyGame, taskPoints, withGame } from "./game";
 
 const STORAGE_KEY = "viz-org-state-v1";
 
@@ -195,6 +195,7 @@ export type Action =
   | { type: "chooseFrog"; taskId: string }
   | { type: "startDay" }
   | { type: "resetDay" }
+  | { type: "unlockBadge"; badgeId: string }
   | { type: "moveTask"; taskId: string; fromProjectId: string; toProjectId: string }
   | { type: "pullEmail"; candidates: CandidateTask[] }
   | { type: "fileCandidate"; candidateId: string; projectId: string }
@@ -253,8 +254,15 @@ export function reducer(state: AppState, action: Action): AppState {
         tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, done: willBeDone } : t)),
       }));
       if (!willBeDone) return next; // un-completing: keep points, no claw-back
-      const { game, awarded } = completeTask(withGame(state.game), task);
-      return { ...next, game: { ...game, lastAward: { points: awarded, at: Date.now() } } };
+      const isFrog = dayFrogId(state) === task.id;
+      const overdue = !!task.due && task.due < today();
+      const { game, awarded } = completeTask(withGame(state.game), task, { isFrog, overdue });
+      let result: AppState = { ...next, game: { ...game, lastAward: { points: awarded, at: Date.now() } } };
+      // Clean Sweep: nothing pressing left after clearing at least one task today.
+      if (buildDailyPlan(result).length === 0 && (result.game?.tasksToday ?? 0) >= 1) {
+        result = { ...result, game: addBadges(result.game!, ["sweep"]) };
+      }
+      return result;
     }
     case "setHeavy": {
       // Once the day is started, a locked-heavy task can't be un-flagged.
@@ -294,8 +302,10 @@ export function reducer(state: AppState, action: Action): AppState {
     case "redeemCredit": {
       const game = withGame(state.game);
       if (availableCredits(game) < 1) return state;
-      return { ...state, game: { ...game, creditsRedeemed: game.creditsRedeemed + 1 } };
+      return { ...state, game: addBadges({ ...game, creditsRedeemed: game.creditsRedeemed + 1 }, ["maker"]) };
     }
+    case "unlockBadge":
+      return { ...state, game: addBadges(withGame(state.game), [action.badgeId]) };
     case "updateTask":
       return mapProject(state, action.projectId, (p) => ({
         ...p,

@@ -6,7 +6,7 @@ import { AddProjectDialog } from "./components/AddProjectDialog";
 import { SyncDialog } from "./components/SyncDialog";
 import { TodayView } from "./components/TodayView";
 import { StoreContext, loadState, reducer, saveState, useStore } from "./store";
-import { availableCredits, level, withGame } from "./game";
+import { availableCredits, badgeById, level, withGame } from "./game";
 import {
   SyncContext,
   loadSyncConfig,
@@ -20,10 +20,18 @@ import {
 function Header({ onAddProject, onSync }: { onAddProject: () => void; onSync: () => void }) {
   const { state, dispatch } = useStore();
   const game = withGame(state.game);
+  const pokes = useRef(0);
+  const pokeLogo = () => {
+    pokes.current += 1;
+    if (pokes.current >= 5) {
+      dispatch({ type: "unlockBadge", badgeId: "peekaboo" });
+      pokes.current = 0;
+    }
+  };
   return (
     <header className="app-header">
       <div className="brand">
-        <span className="brand-mark" aria-hidden>
+        <span className="brand-mark" onClick={pokeLogo} title="viz-org" style={{ cursor: "pointer" }}>
           ▦
         </span>
         <div>
@@ -75,6 +83,31 @@ function PointsToast() {
   return <div className="toast">+{pts} pts ⚡</div>;
 }
 
+function BadgeToast() {
+  const { state } = useStore();
+  const at = state.game?.lastBadge?.at;
+  const id = state.game?.lastBadge?.id;
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (!at) return;
+    setShow(true);
+    const t = setTimeout(() => setShow(false), 3600);
+    return () => clearTimeout(t);
+  }, [at]);
+  const badge = id ? badgeById(id) : undefined;
+  if (!show || !badge) return null;
+  return (
+    <div className="toast toast-badge">
+      <span className="toast-badge__emoji">{badge.emoji}</span>
+      <span>
+        <strong>{badge.label}</strong> unlocked!
+        <br />
+        <span className="muted">{badge.hint}</span>
+      </span>
+    </div>
+  );
+}
+
 function Workspace() {
   const [tab, setTab] = useState<"today" | "board">("today");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
@@ -112,6 +145,7 @@ function Workspace() {
       {addOpen && <AddProjectDialog onClose={() => setAddOpen(false)} />}
       {syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} />}
       <PointsToast />
+      <BadgeToast />
     </div>
   );
 }
