@@ -282,6 +282,10 @@ body {
   gap: 8px;
   margin-top: 10px;
 }
+.sync-status {
+  font-size: 12px;
+  margin: 6px 0 2px;
+}
 
 /* ---- Daily plan ---- */
 .plan-list,
