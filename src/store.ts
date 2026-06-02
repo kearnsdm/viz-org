@@ -179,6 +179,7 @@ export type Action =
   | { type: "pullEmail"; candidates: CandidateTask[] }
   | { type: "fileCandidate"; candidateId: string; projectId: string }
   | { type: "dismissCandidate"; candidateId: string }
+  | { type: "replaceState"; state: AppState }
   | { type: "clearBoard" }
   | { type: "reset" };
 
@@ -275,6 +276,8 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "dismissCandidate":
       return { ...state, inbox: state.inbox.filter((c) => c.id !== action.candidateId) };
+    case "replaceState":
+      return action.state;
     case "clearBoard":
       return emptyState();
     case "reset":
@@ -346,6 +349,37 @@ export function decodeCandidates(input: string): CandidateTask[] {
             : undefined,
       from: typeof c.from === "string" ? c.from : "Imported",
     }));
+}
+
+// --- Backup / transfer between devices -----------------------------------
+// The app stores its data only in this browser. To move a board to another
+// device, export it to a code here and paste it in there. Same base64-of-JSON
+// format as the task import, but it carries the whole board.
+
+export function exportBoard(state: AppState): string {
+  const json = JSON.stringify({ v: 1, state });
+  const bytes = new TextEncoder().encode(json);
+  let bin = "";
+  bytes.forEach((b) => (bin += String.fromCharCode(b)));
+  return btoa(bin);
+}
+
+/** Decode a backup code into a full board state. Throws if it can't be read. */
+export function importBoard(code: string): AppState {
+  const text = code.trim().replace(/\s+/g, "");
+  const bin = atob(text);
+  const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+  const parsed = JSON.parse(new TextDecoder().decode(bytes));
+  const state = parsed && parsed.state ? parsed.state : parsed;
+  if (!state || !Array.isArray(state.projects)) {
+    throw new Error("Not a valid board backup code");
+  }
+  if (typeof state.boardCapacity !== "number") state.boardCapacity = 32;
+  if (!Array.isArray(state.inbox)) state.inbox = [];
+  if (!state.projects.some((p: Project) => p.isAdmin)) {
+    state.projects.push({ id: uid("proj"), name: "Admin", color: "#64748b", capacity: 3, isAdmin: true, tasks: [] });
+  }
+  return state as AppState;
 }
 
 // --- Daily plan ----------------------------------------------------------
