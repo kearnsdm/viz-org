@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Board } from "./components/Board";
-import { DailyPlan } from "./components/DailyPlan";
 import { EmailIntake } from "./components/EmailIntake";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { AddProjectDialog } from "./components/AddProjectDialog";
 import { SyncDialog } from "./components/SyncDialog";
+import { TodayView } from "./components/TodayView";
 import { StoreContext, loadState, reducer, saveState, useStore } from "./store";
+import { availableCredits, level, withGame } from "./game";
 import {
   SyncContext,
   loadSyncConfig,
@@ -18,6 +19,7 @@ import {
 
 function Header({ onAddProject, onSync }: { onAddProject: () => void; onSync: () => void }) {
   const { state, dispatch } = useStore();
+  const game = withGame(state.game);
   return (
     <header className="app-header">
       <div className="brand">
@@ -30,6 +32,9 @@ function Header({ onAddProject, onSync }: { onAddProject: () => void; onSync: ()
         </div>
       </div>
       <div className="header-actions">
+        <span className="game-chip" title="Points · level · build credits ready">
+          ⚡ {game.points} · Lvl {level(game.points)} · {availableCredits(game)}🛠️
+        </span>
         <button className="btn btn-primary" onClick={onAddProject}>
           + New project
         </button>
@@ -55,7 +60,23 @@ function Header({ onAddProject, onSync }: { onAddProject: () => void; onSync: ()
   );
 }
 
+function PointsToast() {
+  const { state } = useStore();
+  const at = state.game?.lastAward?.at;
+  const pts = state.game?.lastAward?.points ?? 0;
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (!at) return;
+    setShow(true);
+    const id = setTimeout(() => setShow(false), 2400);
+    return () => clearTimeout(id);
+  }, [at]);
+  if (!show || !pts) return null;
+  return <div className="toast">+{pts} pts ⚡</div>;
+}
+
 function Workspace() {
+  const [tab, setTab] = useState<"today" | "board">("today");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
@@ -63,20 +84,34 @@ function Workspace() {
   return (
     <div className="app">
       <Header onAddProject={() => setAddOpen(true)} onSync={() => setSyncOpen(true)} />
-      <main className="layout">
-        <section className="board-column">
-          <Board onOpenProject={setActiveProjectId} onAddProject={() => setAddOpen(true)} />
-        </section>
-        <aside className="side-column">
-          <DailyPlan onOpenProject={setActiveProjectId} />
-          <EmailIntake />
-        </aside>
-      </main>
+      <nav className="tabbar">
+        <button className={`tab ${tab === "today" ? "is-active" : ""}`} onClick={() => setTab("today")}>
+          Today
+        </button>
+        <button className={`tab ${tab === "board" ? "is-active" : ""}`} onClick={() => setTab("board")}>
+          Board
+        </button>
+      </nav>
+      {tab === "board" ? (
+        <main className="layout">
+          <section className="board-column">
+            <Board onOpenProject={setActiveProjectId} onAddProject={() => setAddOpen(true)} />
+          </section>
+          <aside className="side-column">
+            <EmailIntake />
+          </aside>
+        </main>
+      ) : (
+        <main className="layout layout--single">
+          <TodayView onOpenProject={setActiveProjectId} />
+        </main>
+      )}
       {activeProjectId && (
         <ProjectPanel projectId={activeProjectId} onClose={() => setActiveProjectId(null)} />
       )}
       {addOpen && <AddProjectDialog onClose={() => setAddOpen(false)} />}
       {syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} />}
+      <PointsToast />
     </div>
   );
 }

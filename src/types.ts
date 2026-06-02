@@ -18,6 +18,10 @@ export interface Task {
   due?: string;
   /** Estimated time to do this task, in minutes. */
   estimateMinutes?: number;
+  /** Flagged as emotionally heavy / aversive — earns bonus points. */
+  heavy?: boolean;
+  /** The smallest 2-minute first move, captured to lower activation energy. */
+  firstStep?: string;
   createdAt: number;
   /** Where the task came from, e.g. "email", "manual". */
   source?: string;
@@ -61,4 +65,31 @@ export interface AppState {
   projects: Project[];
   /** Candidate tasks pulled from email, awaiting filing into a project. */
   inbox: CandidateTask[];
+  /** Token-economy / motivation state. Optional so older saves still load. */
+  game?: GameState;
+}
+
+export interface GameState {
+  /** Lifetime points earned. */
+  points: number;
+  tasksCompleted: number;
+  heavyCompleted: number;
+  focusSessions: number;
+  /** Build Credits already redeemed (spent on building viz-org). */
+  creditsRedeemed: number;
+  /** Consecutive active days. */
+  streak: number;
+  /** yyyy-mm-dd of the most recent activity. */
+  lastActiveDate?: string;
+  /** Points earned so far today, and the day they belong to. */
+  pointsToday: number;
+  todayDate?: string;
+  /** Best single-day point total. */
+  bestDayPoints: number;
+  /** Earned badge ids. */
+  badges: string[];
+  /** Task ids already counted, so re-checking doesn't double-award. */
+  awardedTaskIds: string[];
+  /** Transient: the most recent award, for showing a points toast. */
+  lastAward?: { points: number; at: number };
 }

@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type { AppState, CandidateTask, Project, Task, Urgency } from "./types";
+import { availableCredits, completeFocus, completeTask, emptyGame, withGame } from "./game";
 
 const STORAGE_KEY = "viz-org-state-v1";
 
@@ -119,6 +120,17 @@ function seedState(): AppState {
     boardCapacity: 32,
     projects,
     inbox: [],
+    game: emptyGame(),
+  };
+}
+
+/** Ensure required fields exist on a loaded/imported board (forward-compatible). */
+export function normalizeState(s: AppState): AppState {
+  return {
+    boardCapacity: typeof s.boardCapacity === "number" ? s.boardCapacity : 32,
+    projects: Array.isArray(s.projects) ? s.projects : [],
+    inbox: Array.isArray(s.inbox) ? s.inbox : [],
+    game: withGame(s.game),
   };
 }
 
@@ -127,7 +139,7 @@ export function loadState(): AppState {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as AppState;
-      if (parsed && Array.isArray(parsed.projects)) return parsed;
+      if (parsed && Array.isArray(parsed.projects)) return normalizeState(parsed);
     }
   } catch {
     // fall through to seed
@@ -160,6 +172,7 @@ export function emptyState(): AppState {
       { id: uid("proj"), name: "Admin", color: "#64748b", capacity: 3, isAdmin: true, tasks: [] },
     ],
     inbox: [],
+    game: emptyGame(),
   };
 }
 
@@ -175,6 +188,10 @@ export type Action =
   | { type: "toggleTask"; projectId: string; taskId: string }
   | { type: "updateTask"; projectId: string; taskId: string; patch: Partial<Task> }
   | { type: "deleteTask"; projectId: string; taskId: string }
+  | { type: "setHeavy"; projectId: string; taskId: string; heavy: boolean }
+  | { type: "setFirstStep"; projectId: string; taskId: string; firstStep: string }
+  | { type: "focusComplete" }
+  | { type: "redeemCredit" }
   | { type: "moveTask"; taskId: string; fromProjectId: string; toProjectId: string }
   | { type: "pullEmail"; candidates: CandidateTask[] }
   | { type: "fileCandidate"; candidateId: string; projectId: string }
@@ -223,11 +240,38 @@ export function reducer(state: AppState, action: Action): AppState {
           }),
         ],
       }));
-    case "toggleTask":
+    case "toggleTask": {
+      const project = state.projects.find((p) => p.id === action.projectId);
+      const task = project?.tasks.find((t) => t.id === action.taskId);
+      if (!task) return state;
+      const willBeDone = !task.done;
+      const next = mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, done: willBeDone } : t)),
+      }));
+      if (!willBeDone) return next; // un-completing: keep points, no claw-back
+      const { game, awarded } = completeTask(withGame(state.game), task);
+      return { ...next, game: { ...game, lastAward: { points: awarded, at: Date.now() } } };
+    }
+    case "setHeavy":
       return mapProject(state, action.projectId, (p) => ({
         ...p,
-        tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, done: !t.done } : t)),
+        tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, heavy: action.heavy } : t)),
       }));
+    case "setFirstStep":
+      return mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, firstStep: action.firstStep } : t)),
+      }));
+    case "focusComplete": {
+      const { game, awarded } = completeFocus(withGame(state.game));
+      return { ...state, game: { ...game, lastAward: { points: awarded, at: Date.now() } } };
+    }
+    case "redeemCredit": {
+      const game = withGame(state.game);
+      if (availableCredits(game) < 1) return state;
+      return { ...state, game: { ...game, creditsRedeemed: game.creditsRedeemed + 1 } };
+    }
     case "updateTask":
       return mapProject(state, action.projectId, (p) => ({
         ...p,
@@ -277,7 +321,7 @@ export function reducer(state: AppState, action: Action): AppState {
     case "dismissCandidate":
       return { ...state, inbox: state.inbox.filter((c) => c.id !== action.candidateId) };
     case "replaceState":
-      return action.state;
+      return normalizeState(action.state);
     case "clearBoard":
       return emptyState();
     case "reset":
