@@ -40,9 +40,20 @@ export function saveSyncConfig(cfg: SyncConfig | null): void {
   }
 }
 
+/** Build the endpoint URL with the passphrase as a query param. */
+function withKey(url: string, key: string): string {
+  const u = new URL(url);
+  u.searchParams.set("key", key);
+  return u.toString();
+}
+
+// Both calls are deliberately "simple" cross-origin requests — no custom
+// headers, and a text/plain content type — so the browser never sends a CORS
+// preflight. That avoids the most common cross-site failures with shared hosts.
+
 /** Fetch the remote board, or null if the server has nothing stored yet. */
 export async function pullRemote(cfg: SyncConfig): Promise<AppState | null> {
-  const res = await fetch(cfg.url, { headers: { "X-Viz-Key": cfg.key } });
+  const res = await fetch(withKey(cfg.url, cfg.key), { method: "GET" });
   if (res.status === 401) throw new Error("Wrong passphrase (401)");
   if (!res.ok) throw new Error(`Server returned ${res.status}`);
   const data = await res.json();
@@ -51,9 +62,9 @@ export async function pullRemote(cfg: SyncConfig): Promise<AppState | null> {
 
 /** Save the whole board to the remote endpoint. */
 export async function pushRemote(cfg: SyncConfig, state: AppState): Promise<void> {
-  const res = await fetch(cfg.url, {
+  const res = await fetch(withKey(cfg.url, cfg.key), {
     method: "POST",
-    headers: { "X-Viz-Key": cfg.key, "Content-Type": "application/json" },
+    headers: { "Content-Type": "text/plain;charset=UTF-8" },
     body: JSON.stringify({ state, savedAt: new Date().toISOString() }),
   });
   if (res.status === 401) throw new Error("Wrong passphrase (401)");
