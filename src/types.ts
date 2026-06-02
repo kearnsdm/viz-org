@@ -16,6 +16,8 @@ export interface Task {
   urgency: Urgency;
   /** ISO date string (yyyy-mm-dd) the task is due, if any. */
   due?: string;
+  /** Estimated time to do this task, in minutes. */
+  estimateMinutes?: number;
   createdAt: number;
   /** Where the task came from, e.g. "email", "manual". */
   source?: string;
@@ -44,6 +46,8 @@ export interface CandidateTask {
   suggestedProjectId?: string;
   urgency: Urgency;
   due?: string;
+  /** Estimated time to do this task, in minutes. */
+  estimateMinutes?: number;
   /** The email subject / sender this candidate was distilled from. */
   from: string;
 }

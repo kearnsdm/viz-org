@@ -1,9 +1,10 @@
-import { buildDailyPlan, useStore } from "../store";
+import { buildDailyPlan, formatDuration, useStore } from "../store";
 
 export function DailyPlan({ onOpenProject }: { onOpenProject: (id: string) => void }) {
   const { state, dispatch } = useStore();
   const plan = buildDailyPlan(state);
   const todayStr = new Date().toISOString().slice(0, 10);
+  const totalMinutes = plan.reduce((s, { task }) => s + (task.estimateMinutes ?? 0), 0);
 
   return (
     <div className="card daily-plan">
@@ -13,6 +14,12 @@ export function DailyPlan({ onOpenProject }: { onOpenProject: (id: string) => vo
       </div>
       <p className="muted card__subtitle">
         What's pressing today — pulled from every project and the admin box.
+        {totalMinutes > 0 && (
+          <>
+            {" "}
+            About <strong>{formatDuration(totalMinutes)}</strong> of work.
+          </>
+        )}
       </p>
       {plan.length === 0 ? (
         <p className="muted empty-hint">Nothing urgent. Your board is calm. 🌤️</p>
@@ -39,6 +46,9 @@ export function DailyPlan({ onOpenProject }: { onOpenProject: (id: string) => vo
                       {project.name}
                     </button>
                     <span className={`pill pill-${task.urgency}`}>{task.urgency}</span>
+                    {task.estimateMinutes ? (
+                      <span className="pill pill-time">⏱ {formatDuration(task.estimateMinutes)}</span>
+                    ) : null}
                     {task.due && (
                       <span className={`muted ${overdue ? "overdue" : ""}`}>
                         {overdue ? "overdue · " : "due "}

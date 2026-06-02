@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { decodeCandidates, fetchEmailCandidates, useStore } from "../store";
+import { decodeCandidates, fetchEmailCandidates, formatDuration, useStore } from "../store";
 
 export function EmailIntake() {
   const { state, dispatch } = useStore();
@@ -85,6 +85,9 @@ export function EmailIntake() {
                 <span className="candidate__from muted">{c.from}</span>
                 <span className="candidate__tags">
                   <span className={`pill pill-${c.urgency}`}>{c.urgency}</span>
+                  {c.estimateMinutes ? (
+                    <span className="pill pill-time">⏱ {formatDuration(c.estimateMinutes)}</span>
+                  ) : null}
                   {c.due && <span className="muted">due {c.due}</span>}
                 </span>
               </div>

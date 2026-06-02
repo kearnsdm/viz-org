@@ -375,6 +375,10 @@ body {
   background: #1b3a2d;
   color: #6ee7a8;
 }
+.pill-time {
+  background: #26314f;
+  color: #9fb4e6;
+}
 
 .link-chip {
   border: 1px solid var(--border);

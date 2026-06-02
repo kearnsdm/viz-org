@@ -33,6 +33,21 @@ export function freeSlots(state: AppState): number {
   return Math.max(0, state.boardCapacity - allocatedSlots(state));
 }
 
+/** Format a minute count as a short human duration, e.g. 90 -> "1h 30m". */
+export function formatDuration(min?: number): string {
+  if (!min || min <= 0) return "";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+/** Total estimated minutes across a project's open (not done) tasks. */
+export function projectMinutes(p: Project): number {
+  return p.tasks.reduce((s, t) => s + (t.done ? 0 : t.estimateMinutes ?? 0), 0);
+}
+
 function today(offsetDays = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
@@ -156,7 +171,7 @@ export type Action =
   | { type: "setCapacity"; projectId: string; capacity: number }
   | { type: "deleteProject"; projectId: string }
   | { type: "setBoardCapacity"; capacity: number }
-  | { type: "addTask"; projectId: string; title: string; urgency?: Urgency; due?: string }
+  | { type: "addTask"; projectId: string; title: string; urgency?: Urgency; due?: string; estimateMinutes?: number }
   | { type: "toggleTask"; projectId: string; taskId: string }
   | { type: "updateTask"; projectId: string; taskId: string; patch: Partial<Task> }
   | { type: "deleteTask"; projectId: string; taskId: string }
@@ -200,7 +215,11 @@ export function reducer(state: AppState, action: Action): AppState {
         ...p,
         tasks: [
           ...p.tasks,
-          makeTask(action.title, { urgency: action.urgency ?? "normal", due: action.due }),
+          makeTask(action.title, {
+            urgency: action.urgency ?? "normal",
+            due: action.due,
+            estimateMinutes: action.estimateMinutes,
+          }),
         ],
       }));
     case "toggleTask":
@@ -243,6 +262,7 @@ export function reducer(state: AppState, action: Action): AppState {
         notes: candidate.notes,
         urgency: candidate.urgency,
         due: candidate.due,
+        estimateMinutes: candidate.estimateMinutes,
         source: "email",
       });
       return {
@@ -318,6 +338,12 @@ export function decodeCandidates(input: string): CandidateTask[] {
       notes: typeof c.notes === "string" ? c.notes : undefined,
       urgency: urgencies.has(c.urgency) ? (c.urgency as Urgency) : "normal",
       due: typeof c.due === "string" ? c.due : undefined,
+      estimateMinutes:
+        typeof c.estimateMinutes === "number"
+          ? c.estimateMinutes
+          : typeof c.estimate === "number"
+            ? c.estimate
+            : undefined,
       from: typeof c.from === "string" ? c.from : "Imported",
     }));
 }

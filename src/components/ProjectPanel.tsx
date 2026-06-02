@@ -1,8 +1,20 @@
 import { useState } from "react";
-import { projectWeight, useStore } from "../store";
+import { formatDuration, projectMinutes, projectWeight, useStore } from "../store";
 import type { Task, Urgency } from "../types";
 
 const URGENCIES: Urgency[] = ["low", "normal", "high", "urgent"];
+
+export const DURATIONS: { label: string; min: number }[] = [
+  { label: "15m", min: 15 },
+  { label: "30m", min: 30 },
+  { label: "45m", min: 45 },
+  { label: "1h", min: 60 },
+  { label: "1.5h", min: 90 },
+  { label: "2h", min: 120 },
+  { label: "3h", min: 180 },
+  { label: "4h", min: 240 },
+  { label: "1 day", min: 480 },
+];
 
 function TaskRow({ projectId, task }: { projectId: string; task: Task }) {
   const { dispatch, state } = useStore();
@@ -26,10 +38,32 @@ function TaskRow({ projectId, task }: { projectId: string; task: Task }) {
               {overdue ? " · overdue" : ""}
             </span>
           )}
+          {task.estimateMinutes ? (
+            <span className="pill pill-time">⏱ {formatDuration(task.estimateMinutes)}</span>
+          ) : null}
           {task.source === "email" && <span className="pill pill-email">from email</span>}
         </span>
       </div>
       <div className="task-row__actions">
+        <select
+          value={task.estimateMinutes ?? ""}
+          onChange={(e) =>
+            dispatch({
+              type: "updateTask",
+              projectId,
+              taskId: task.id,
+              patch: { estimateMinutes: e.target.value ? Number(e.target.value) : undefined },
+            })
+          }
+          title="Time estimate"
+        >
+          <option value="">— time</option>
+          {DURATIONS.map((d) => (
+            <option key={d.min} value={d.min}>
+              {d.label}
+            </option>
+          ))}
+        </select>
         <select
           value={task.urgency}
           onChange={(e) =>
@@ -79,6 +113,7 @@ export function ProjectPanel({ projectId, onClose }: { projectId: string; onClos
   const [title, setTitle] = useState("");
   const [urgency, setUrgency] = useState<Urgency>("normal");
   const [due, setDue] = useState("");
+  const [est, setEst] = useState("");
 
   if (!project) return null;
 
@@ -89,11 +124,21 @@ export function ProjectPanel({ projectId, onClose }: { projectId: string; onClos
 
   const addTask = () => {
     if (!title.trim()) return;
-    dispatch({ type: "addTask", projectId, title, urgency, due: due || undefined });
+    dispatch({
+      type: "addTask",
+      projectId,
+      title,
+      urgency,
+      due: due || undefined,
+      estimateMinutes: est ? Number(est) : undefined,
+    });
     setTitle("");
     setUrgency("normal");
     setDue("");
+    setEst("");
   };
+
+  const totalMinutes = projectMinutes(project);
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -123,6 +168,12 @@ export function ProjectPanel({ projectId, onClose }: { projectId: string; onClos
             />
           </label>
           {freeInProject > 0 && <span className="muted">{freeInProject} slot(s) reserved & empty</span>}
+          {totalMinutes > 0 && (
+            <>
+              <span className="muted">·</span>
+              <span className="pill pill-time">⏱ ~{formatDuration(totalMinutes)} of work</span>
+            </>
+          )}
         </div>
 
         <div className="add-task">
@@ -141,6 +192,14 @@ export function ProjectPanel({ projectId, onClose }: { projectId: string; onClos
             ))}
           </select>
           <input type="date" value={due} onChange={(e) => setDue(e.target.value)} title="Due date" />
+          <select value={est} onChange={(e) => setEst(e.target.value)} title="Time estimate">
+            <option value="">est. time</option>
+            {DURATIONS.map((d) => (
+              <option key={d.min} value={d.min}>
+                {d.label}
+              </option>
+            ))}
+          </select>
           <button className="btn btn-primary" onClick={addTask}>
             Add
           </button>
