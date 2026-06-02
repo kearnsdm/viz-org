@@ -25,14 +25,14 @@ function Header({ onAddProject }: { onAddProject: () => void }) {
         </button>
         <button
           className="btn btn-ghost"
-          title="Clear all data and restore the demo board"
+          title="Remove all projects and tasks, leaving a blank board"
           onClick={() => {
-            if (confirm("Reset the board to the demo data? This clears your saved work.")) {
-              dispatch({ type: "reset" });
+            if (confirm("Clear the board? This removes every project and task (an empty Admin box stays). This can't be undone.")) {
+              dispatch({ type: "clearBoard" });
             }
           }}
         >
-          Reset
+          Clear board
         </button>
         <span className="board-meter" title="Allocated vs. total available time">
           {state.projects.reduce((s, p) => s + Math.max(p.capacity, p.tasks.length, 1), 0)} / {state.boardCapacity} slots

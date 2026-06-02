@@ -137,6 +137,17 @@ export function resetState(): AppState {
   return seedState();
 }
 
+/** A blank board: no projects or tasks, just an empty Admin catch-all box. */
+export function emptyState(): AppState {
+  return {
+    boardCapacity: 32,
+    projects: [
+      { id: uid("proj"), name: "Admin", color: "#64748b", capacity: 3, isAdmin: true, tasks: [] },
+    ],
+    inbox: [],
+  };
+}
+
 // --- Actions -------------------------------------------------------------
 
 export type Action =
@@ -153,6 +164,7 @@ export type Action =
   | { type: "pullEmail"; candidates: CandidateTask[] }
   | { type: "fileCandidate"; candidateId: string; projectId: string }
   | { type: "dismissCandidate"; candidateId: string }
+  | { type: "clearBoard" }
   | { type: "reset" };
 
 function mapProject(state: AppState, projectId: string, fn: (p: Project) => Project): AppState {
@@ -243,6 +255,8 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "dismissCandidate":
       return { ...state, inbox: state.inbox.filter((c) => c.id !== action.candidateId) };
+    case "clearBoard":
+      return emptyState();
     case "reset":
       return resetState();
     default:
