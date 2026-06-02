@@ -251,6 +251,38 @@ body {
   font-size: 12px;
 }
 
+.header-buttons {
+  display: flex;
+  gap: 6px;
+}
+.import-box {
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.import-box p {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.import-textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+.import-error {
+  color: #ff8095 !important;
+  margin: 8px 0 0 !important;
+}
+.import-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
 /* ---- Daily plan ---- */
 .plan-list,
 .candidate-list,

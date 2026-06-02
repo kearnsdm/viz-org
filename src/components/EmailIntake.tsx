@@ -1,9 +1,12 @@
 import { useState } from "react";
-import { fetchEmailCandidates, useStore } from "../store";
+import { decodeCandidates, fetchEmailCandidates, useStore } from "../store";
 
 export function EmailIntake() {
   const { state, dispatch } = useStore();
   const [loading, setLoading] = useState(false);
+  const [showImport, setShowImport] = useState(false);
+  const [code, setCode] = useState("");
+  const [importError, setImportError] = useState<string | null>(null);
 
   const adminId = state.projects.find((p) => p.isAdmin)?.id;
 
@@ -16,17 +19,59 @@ export function EmailIntake() {
     }, 450);
   };
 
+  const runImport = () => {
+    setImportError(null);
+    try {
+      const candidates = decodeCandidates(code);
+      if (candidates.length === 0) {
+        setImportError("No tasks found in that code.");
+        return;
+      }
+      dispatch({ type: "pullEmail", candidates });
+      setCode("");
+      setShowImport(false);
+    } catch {
+      setImportError("That code couldn't be read. Paste the whole thing and try again.");
+    }
+  };
+
   return (
     <div className="card email-intake">
       <div className="card__header">
         <h2>Email Intake</h2>
-        <button className="btn btn-sm" onClick={pull} disabled={loading}>
-          {loading ? "Scanning…" : "Pull from email"}
-        </button>
+        <div className="header-buttons">
+          <button className="btn btn-sm btn-ghost" onClick={() => setShowImport((v) => !v)}>
+            Import
+          </button>
+          <button className="btn btn-sm" onClick={pull} disabled={loading}>
+            {loading ? "Scanning…" : "Pull from email"}
+          </button>
+        </div>
       </div>
       <p className="muted card__subtitle">
         Candidate tasks distilled from your inbox. File each into a project or admin.
       </p>
+      {showImport && (
+        <div className="import-box">
+          <p className="muted">Paste an import code (e.g. real tasks pulled from your mailbox):</p>
+          <textarea
+            className="import-textarea"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="Paste code here…"
+            rows={3}
+          />
+          {importError && <p className="import-error">{importError}</p>}
+          <div className="import-actions">
+            <button className="btn btn-sm btn-ghost" onClick={() => setShowImport(false)}>
+              Cancel
+            </button>
+            <button className="btn btn-sm btn-primary" onClick={runImport} disabled={!code.trim()}>
+              Load tasks
+            </button>
+          </div>
+        </div>
+      )}
       {state.inbox.length === 0 ? (
         <p className="muted empty-hint">
           Inbox clear. Hit <em>Pull from email</em> to scan for action items.

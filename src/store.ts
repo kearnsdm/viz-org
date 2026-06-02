@@ -274,6 +274,40 @@ export function fetchEmailCandidates(): CandidateTask[] {
   return shuffled.map((c) => ({ ...c, id: uid("cand") }));
 }
 
+/**
+ * Decode an import code into candidate tasks. Accepts either a base64-encoded
+ * JSON blob (the standard share format) or raw JSON. Used to bring in real
+ * action items prepared elsewhere (e.g. pulled from a mailbox in a chat).
+ * Throws if the input can't be parsed.
+ */
+export function decodeCandidates(input: string): CandidateTask[] {
+  const text = input.trim();
+  if (!text) return [];
+  let json = text;
+  // Try base64 first; fall back to treating the input as raw JSON.
+  try {
+    const bin = atob(text.replace(/\s+/g, ""));
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    const decoded = new TextDecoder().decode(bytes).trim();
+    if (decoded.startsWith("[") || decoded.startsWith("{")) json = decoded;
+  } catch {
+    /* not base64 — treat as raw JSON below */
+  }
+  const parsed = JSON.parse(json);
+  const arr = Array.isArray(parsed) ? parsed : [parsed];
+  const urgencies = new Set<Urgency>(["low", "normal", "high", "urgent"]);
+  return arr
+    .filter((c) => c && typeof c.title === "string" && c.title.trim())
+    .map((c) => ({
+      id: typeof c.id === "string" ? c.id : uid("cand"),
+      title: String(c.title).trim(),
+      notes: typeof c.notes === "string" ? c.notes : undefined,
+      urgency: urgencies.has(c.urgency) ? (c.urgency as Urgency) : "normal",
+      due: typeof c.due === "string" ? c.due : undefined,
+      from: typeof c.from === "string" ? c.from : "Imported",
+    }));
+}
+
 // --- Daily plan ----------------------------------------------------------
 
 export interface PlanItem {
