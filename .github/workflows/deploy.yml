@@ -1,10 +1,11 @@
 name: Deploy to GitHub Pages
 
-# Build the app and publish it to GitHub Pages on every push to the working
-# branch. Pages is enabled automatically on the first run.
+# Build the app and publish it to GitHub Pages. GitHub Pages publishes from
+# the default branch, so deploys run on pushes to main (and the working branch
+# for previews / manual runs).
 on:
   push:
-    branches: ["claude/task-management-dashboard-dZsVB"]
+    branches: ["main", "claude/task-management-dashboard-dZsVB"]
   workflow_dispatch:
 
 # Permissions needed to deploy to GitHub Pages.
