@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   buildDailyPlan,
   dayFrogId,
-  findTaskItem,
   formatDuration,
   isDayStarted,
   lockedHeavyIds,
@@ -41,7 +40,11 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
   const started = isDayStarted(state);
   const locked = lockedHeavyIds(state);
   const frogId = dayFrogId(state);
-  const frog = (frogId && findTaskItem(state, frogId)) || (!started ? pickFrog(plan) : null);
+  // The frog must be something still on today's plate; if it's deferred out,
+  // fall back to a suggestion. (findTaskItem kept for callers elsewhere.)
+  const chosenFrog = frogId ? plan.find((i) => i.task.id === frogId) : undefined;
+  const frog = chosenFrog ?? pickFrog(plan);
+  const frogIsChosen = !!chosenFrog;
 
   const [timer, setTimer] = useState<{ title: string } | null>(null);
   const [stuck, setStuck] = useState<PlanItem | null>(null);
@@ -82,15 +85,13 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
           {task.firstStep && <span className="first-step muted">▶ first move: {task.firstStep}</span>}
         </div>
         <div className="plan-item__actions">
-          {!started && (
-            <button
-              className={`icon-btn ${isChosenFrog ? "is-on" : ""}`}
-              title={isChosenFrog ? "This is your frog" : "Make this the frog"}
-              onClick={() => dispatch({ type: "chooseFrog", taskId: task.id })}
-            >
-              🐸
-            </button>
-          )}
+          <button
+            className={`icon-btn ${isChosenFrog ? "is-on" : ""}`}
+            title={isChosenFrog ? "Your frog — tap to unfrog" : "Make this the frog"}
+            onClick={() => dispatch({ type: "chooseFrog", taskId: task.id })}
+          >
+            🐸
+          </button>
           <button
             className={`icon-btn ${task.heavy ? "is-on" : ""}`}
             title={heavyLocked ? "Heavy — locked for today" : task.heavy ? "Heavy (bonus points)" : "Mark heavy"}
@@ -120,8 +121,8 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
         {started ? (
           <>
             <div>
-              <strong>🔒 Day locked in.</strong>{" "}
-              <span className="muted">Your frog and heavy picks are set — no wriggling out now.</span>
+              <strong>🔒 Heavy picks locked.</strong>{" "}
+              <span className="muted">The hard stuff stays flagged — no pretending it's easy. (You can still re-point the 🐸 frog or defer dates.)</span>
             </div>
             <button className="btn btn-sm btn-ghost" onClick={() => dispatch({ type: "resetDay" })}>
               Re-plan day
@@ -131,7 +132,7 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
           <>
             <div>
               <strong>Set up your day.</strong>{" "}
-              <span className="muted">Flag what's truly heavy (🔥), pick your frog (🐸), adjust dates/priority — then commit.</span>
+              <span className="muted">Flag what's truly heavy (🔥), pick your frog (🐸), adjust dates/priority — then lock in the heavy list.</span>
             </div>
             <button className="btn btn-sm btn-primary" onClick={() => dispatch({ type: "startDay" })}>
               Start my day 🔒
@@ -166,8 +167,8 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
       {frog && (
         <div className="card frog-card">
           <div className="card__header">
-            <h2>🐸 {started ? "Today's frog" : "Frog (suggested)"}</h2>
-            <span className="muted">{started ? "do this first" : "tap 🐸 on any task to pick your own"}</span>
+            <h2>🐸 {frogIsChosen ? "Today's frog" : "Frog (suggested)"}</h2>
+            <span className="muted">{frogIsChosen ? "do this first · tap 🐸 to change or unfrog" : "tap 🐸 on any task to pick your own"}</span>
           </div>
           <ul className="plan-list">{row(frog, true)}</ul>
         </div>

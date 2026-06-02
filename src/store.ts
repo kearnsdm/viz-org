@@ -276,8 +276,11 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "chooseFrog": {
       const date = today();
-      if (state.day?.date === date && state.day.started) return state; // locked once started
-      return { ...state, day: { date, started: false, frogTaskId: action.taskId, lockedHeavy: [] } };
+      const sameDay = state.day?.date === date;
+      const cur = sameDay ? state.day! : { date, started: false, frogTaskId: undefined, lockedHeavy: [] };
+      // Toggle: tapping the current frog clears it. The heavy lock is untouched.
+      const frogTaskId = cur.frogTaskId === action.taskId ? undefined : action.taskId;
+      return { ...state, day: { ...cur, date, frogTaskId } };
     }
     case "startDay": {
       const date = today();
@@ -508,7 +511,7 @@ const URGENCY_RANK: Record<Urgency, number> = { urgent: 0, high: 1, normal: 2, l
  * from every project (including admin), ordered by what needs attention first.
  */
 export function buildDailyPlan(state: AppState): PlanItem[] {
-  const horizon = today(2); // today + next 2 days
+  const horizon = today(); // overdue or due today — deferring to tomorrow drops it off Today
   const items: PlanItem[] = [];
   for (const project of state.projects) {
     for (const task of project.tasks) {
