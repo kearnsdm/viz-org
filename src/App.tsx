@@ -10,8 +10,8 @@ import { availableCredits, badgeById, level, withGame } from "./game";
 import {
   SyncContext,
   loadSyncConfig,
-  pullRemote,
-  pushRemote,
+  pullRemoteRetrying,
+  pushRemoteRetrying,
   saveSyncConfig,
   type SyncConfig,
   type SyncStatus,
@@ -175,10 +175,10 @@ export function App() {
     setStatus({ phase: "syncing" });
     (async () => {
       try {
-        const remote = await pullRemote(config);
+        const remote = await pullRemoteRetrying(config);
         if (cancelled) return;
         if (remote) dispatch({ type: "replaceState", state: remote });
-        else await pushRemote(config, latest.current);
+        else await pushRemoteRetrying(config, latest.current);
         if (!cancelled) setStatus({ phase: "ok", at: Date.now() });
       } catch (e) {
         if (!cancelled) setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" });
@@ -191,17 +191,35 @@ export function App() {
     };
   }, [config]);
 
+  const pushNow = useCallback(() => {
+    if (!config) return;
+    setStatus({ phase: "syncing" });
+    pushRemoteRetrying(config, latest.current)
+      .then(() => setStatus({ phase: "ok", at: Date.now() }))
+      .catch((e) => setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" }));
+  }, [config]);
+
   // Push changes up (debounced) once the initial pull has settled.
   useEffect(() => {
     if (!config || !hydrated.current) return;
-    const id = setTimeout(() => {
-      setStatus({ phase: "syncing" });
-      pushRemote(config, latest.current)
-        .then(() => setStatus({ phase: "ok", at: Date.now() }))
-        .catch((e) => setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" }));
-    }, 1200);
+    const id = setTimeout(pushNow, 1200);
     return () => clearTimeout(id);
-  }, [state, config]);
+  }, [state, config, pushNow]);
+
+  // When the connection comes back (or the tab regains focus), re-sync so a
+  // stale "NetworkError" from a blip heals itself automatically.
+  useEffect(() => {
+    if (!config) return;
+    const handler = () => {
+      if (hydrated.current) pushNow();
+    };
+    window.addEventListener("online", handler);
+    window.addEventListener("focus", handler);
+    return () => {
+      window.removeEventListener("online", handler);
+      window.removeEventListener("focus", handler);
+    };
+  }, [config, pushNow]);
 
   const connect = useCallback((cfg: SyncConfig) => {
     saveSyncConfig(cfg);
@@ -212,13 +230,7 @@ export function App() {
     setConfig(null);
     setStatus({ phase: "idle" });
   }, []);
-  const syncNow = useCallback(() => {
-    if (!config) return;
-    setStatus({ phase: "syncing" });
-    pushRemote(config, latest.current)
-      .then(() => setStatus({ phase: "ok", at: Date.now() }))
-      .catch((e) => setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" }));
-  }, [config]);
+  const syncNow = pushNow;
 
   return (
     <StoreContext.Provider value={{ state, dispatch }}>

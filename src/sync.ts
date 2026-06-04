@@ -71,6 +71,36 @@ export async function pushRemote(cfg: SyncConfig, state: AppState): Promise<void
   if (!res.ok) throw new Error(`Server returned ${res.status}`);
 }
 
+const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Pull, retrying a few times so a momentary blip doesn't surface as an error. */
+export async function pullRemoteRetrying(cfg: SyncConfig, attempts = 3): Promise<AppState | null> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await pullRemote(cfg);
+    } catch (e) {
+      lastErr = e;
+      await delay(400 * (i + 1));
+    }
+  }
+  throw lastErr;
+}
+
+/** Push, retrying a few times before reporting failure. */
+export async function pushRemoteRetrying(cfg: SyncConfig, state: AppState, attempts = 3): Promise<void> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await pushRemote(cfg, state);
+    } catch (e) {
+      lastErr = e;
+      await delay(400 * (i + 1));
+    }
+  }
+  throw lastErr;
+}
+
 export interface SyncContextValue {
   config: SyncConfig | null;
   status: SyncStatus;
