@@ -1,0 +1,10 @@
+# Lets the viz-org app (served from another domain) read this sync endpoint.
+# This adds the "CORS" permission header at the Apache level, so it works even
+# if PHP can't send headers for any reason. Scoped to viz-sync.php only.
+<IfModule mod_headers.c>
+  <Files "viz-sync.php">
+    Header always set Access-Control-Allow-Origin "*"
+    Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Content-Type, X-Viz-Key"
+  </Files>
+</IfModule>
