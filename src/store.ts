@@ -195,6 +195,10 @@ export type Action =
   | { type: "chooseFrog"; taskId: string }
   | { type: "startDay" }
   | { type: "resetDay" }
+  | { type: "setDayCapacity"; minutes: number }
+  | { type: "snoozeTask"; projectId: string; taskId: string; until: string }
+  | { type: "snoozeMany"; ids: string[]; until: string }
+  | { type: "unsnoozeTask"; projectId: string; taskId: string }
   | { type: "unlockBadge"; badgeId: string }
   | { type: "moveTask"; taskId: string; fromProjectId: string; toProjectId: string }
   | { type: "pullEmail"; candidates: CandidateTask[] }
@@ -293,6 +297,31 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "resetDay":
       return { ...state, day: undefined };
+    case "setDayCapacity": {
+      const date = today();
+      const base = state.day && state.day.date === date ? state.day : { date, started: false, lockedHeavy: [] as string[] };
+      return { ...state, day: { ...base, date, capacityMinutes: Math.max(0, action.minutes) } };
+    }
+    case "snoozeTask":
+      return mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, snoozeUntil: action.until } : t)),
+      }));
+    case "snoozeMany": {
+      const ids = new Set(action.ids);
+      return {
+        ...state,
+        projects: state.projects.map((p) => ({
+          ...p,
+          tasks: p.tasks.map((t) => (ids.has(t.id) ? { ...t, snoozeUntil: action.until } : t)),
+        })),
+      };
+    }
+    case "unsnoozeTask":
+      return mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, snoozeUntil: undefined } : t)),
+      }));
     case "setFirstStep":
       return mapProject(state, action.projectId, (p) => ({
         ...p,
@@ -481,6 +510,26 @@ export function lockedHeavyIds(state: AppState): string[] {
   return isDayStarted(state) ? state.day?.lockedHeavy ?? [] : [];
 }
 
+/** Hours-as-minutes the user can work today, if they've set it. */
+export function dayCapacityMinutes(state: AppState): number | undefined {
+  if (state.day && state.day.date === today() && typeof state.day.capacityMinutes === "number") {
+    return state.day.capacityMinutes;
+  }
+  return undefined;
+}
+
+/** Tasks snoozed out of Today (snoozeUntil is in the future). */
+export function snoozedForToday(state: AppState): PlanItem[] {
+  const t = today();
+  const items: PlanItem[] = [];
+  for (const project of state.projects) {
+    for (const task of project.tasks) {
+      if (!task.done && task.snoozeUntil && task.snoozeUntil > t) items.push({ task, project });
+    }
+  }
+  return items;
+}
+
 /** Find a task + its project anywhere on the board. */
 export function findTaskItem(state: AppState, taskId: string): PlanItem | null {
   for (const project of state.projects) {
@@ -518,6 +567,7 @@ export function buildDailyPlan(state: AppState): PlanItem[] {
   for (const project of state.projects) {
     for (const task of project.tasks) {
       if (task.done) continue;
+      if (task.snoozeUntil && task.snoozeUntil > horizon) continue; // snoozed out of Today
       const dueSoon = task.due ? task.due <= horizon : false;
       const pressing = task.urgency === "urgent" || task.urgency === "high";
       if (dueSoon || pressing) items.push({ task, project });

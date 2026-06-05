@@ -1,10 +1,12 @@
 import { useState } from "react";
 import {
   buildDailyPlan,
+  dayCapacityMinutes,
   dayFrogId,
   formatDuration,
   isDayStarted,
   lockedHeavyIds,
+  snoozedForToday,
   useStore,
   type PlanItem,
 } from "../store";
@@ -49,6 +51,49 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
   const [timer, setTimer] = useState<{ title: string } | null>(null);
   const [stuck, setStuck] = useState<PlanItem | null>(null);
   const [edit, setEdit] = useState<PlanItem | null>(null);
+  const [showSnoozed, setShowSnoozed] = useState(false);
+
+  const tomorrow = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  })();
+  const cap = dayCapacityMinutes(state);
+  const planned = totalMinutes;
+  const overMin = cap ? Math.max(0, planned - cap) : 0;
+  const snoozed = snoozedForToday(state);
+
+  // Keep the most important tasks that fit in today's capacity; snooze the rest.
+  const autoFit = () => {
+    if (!cap) return;
+    const rank = (t: PlanItem["task"]) =>
+      t.urgency === "urgent" ? 0 : t.urgency === "high" ? 1 : t.due && t.due <= todayStr ? 1 : 2;
+    const ordered = [...plan].sort((a, b) => {
+      if (frogId) {
+        if (a.task.id === frogId) return -1;
+        if (b.task.id === frogId) return 1;
+      }
+      const ra = rank(a.task);
+      const rb = rank(b.task);
+      if (ra !== rb) return ra - rb;
+      const ad = a.task.due ?? "9999-99-99";
+      const bd = b.task.due ?? "9999-99-99";
+      if (ad !== bd) return ad < bd ? -1 : 1;
+      if (!!b.task.heavy !== !!a.task.heavy) return (b.task.heavy ? 1 : 0) - (a.task.heavy ? 1 : 0);
+      return taskPoints(b.task) - taskPoints(a.task);
+    });
+    const keep = new Set<string>();
+    let used = 0;
+    for (const it of ordered) {
+      const m = it.task.estimateMinutes ?? 30;
+      if (keep.size === 0 || used + m <= cap) {
+        keep.add(it.task.id);
+        used += m;
+      }
+    }
+    const overflow = plan.filter((i) => !keep.has(i.task.id)).map((i) => i.task.id);
+    if (overflow.length) dispatch({ type: "snoozeMany", ids: overflow, until: tomorrow });
+  };
 
   const row = (item: PlanItem, isFrog = false) => {
     const { task, project } = item;
@@ -113,6 +158,13 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
           </button>
           <button className="icon-btn" title="Edit / postpone" onClick={() => setEdit(item)}>
             ✏️
+          </button>
+          <button
+            className="btn btn-sm btn-ghost"
+            title="Not today — snooze to tomorrow (keeps the real due date)"
+            onClick={() => dispatch({ type: "snoozeTask", projectId: project.id, taskId: task.id, until: tomorrow })}
+          >
+            Not today
           </button>
           <button className="btn btn-sm btn-ghost" onClick={() => setStuck(item)}>
             Stuck
@@ -191,13 +243,92 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
           <h2>Today</h2>
           <span className="muted">{todayStr}</span>
         </div>
+
+        <div className="capacity-row">
+          <span className="muted">Time I have today:</span>
+          {[2, 4, 6, 8].map((h) => (
+            <button
+              key={h}
+              className={`btn btn-sm ${cap === h * 60 ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => dispatch({ type: "setDayCapacity", minutes: h * 60 })}
+            >
+              {h}h
+            </button>
+          ))}
+          <input
+            className="cap-hours"
+            type="number"
+            min={0}
+            step={0.5}
+            value={cap != null ? +(cap / 60).toFixed(1) : ""}
+            placeholder="hrs"
+            onChange={(e) => dispatch({ type: "setDayCapacity", minutes: Math.round(Number(e.target.value) * 60) })}
+          />
+        </div>
+
+        {cap != null && cap > 0 && (
+          <>
+            <div className="credit-bar">
+              <div
+                className="credit-bar__fill"
+                style={{
+                  width: `${Math.min(100, Math.round((planned / cap) * 100))}%`,
+                  ...(overMin > 0 ? { background: "linear-gradient(90deg,#ef4444,#f59e0b)" } : {}),
+                }}
+              />
+            </div>
+            <div className="credit-row">
+              <span className="muted">
+                Planned <strong>{formatDuration(planned) || "0m"}</strong> of {formatDuration(cap)}
+              </span>
+              {overMin > 0 ? (
+                <>
+                  <span className="overdue">{formatDuration(overMin)} over</span>
+                  <button className="btn btn-sm btn-primary" onClick={autoFit}>
+                    Trim to fit → snooze overflow
+                  </button>
+                </>
+              ) : (
+                <span className="credits-have">fits ✓</span>
+              )}
+            </div>
+          </>
+        )}
+
         <p className="muted card__subtitle">
-          What's pressing across every project{totalMinutes > 0 ? <> · about <strong>{formatDuration(totalMinutes)}</strong> of work</> : null}.
+          What's pressing{cap == null && totalMinutes > 0 ? <> · about <strong>{formatDuration(totalMinutes)}</strong> of work</> : null}.
         </p>
         {plan.length === 0 ? (
-          <p className="muted empty-hint">Nothing pressing. Your board is calm. 🌤️</p>
+          <p className="muted empty-hint">Nothing left for today. 🌤️</p>
         ) : (
           <ul className="plan-list">{plan.map((i) => row(i))}</ul>
+        )}
+
+        {snoozed.length > 0 && (
+          <div className="snoozed">
+            <button className="btn btn-sm btn-ghost" onClick={() => setShowSnoozed((v) => !v)}>
+              💤 {snoozed.length} snoozed to tomorrow {showSnoozed ? "▲" : "▼"}
+            </button>
+            {showSnoozed && (
+              <ul className="plan-list" style={{ marginTop: 8 }}>
+                {snoozed.map(({ task, project }) => (
+                  <li key={task.id} className="plan-item">
+                    <div className="plan-item__main">
+                      <span className="plan-item__title muted">{task.title}</span>
+                    </div>
+                    <div className="plan-item__actions">
+                      <button
+                        className="btn btn-sm btn-ghost"
+                        onClick={() => dispatch({ type: "unsnoozeTask", projectId: project.id, taskId: task.id })}
+                      >
+                        Bring back
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         )}
       </div>
 

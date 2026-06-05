@@ -24,6 +24,9 @@ export interface Task {
   firstStep?: string;
   /** Deep link back to the source (e.g. the email this came from). */
   link?: string;
+  /** Hidden from "Today" until this date (yyyy-mm-dd) — a soft snooze that
+   * doesn't change the real due date. */
+  snoozeUntil?: string;
   createdAt: number;
   /** Where the task came from, e.g. "email", "manual". */
   source?: string;
@@ -84,6 +87,8 @@ export interface DayPlan {
   frogTaskId?: string;
   /** Heavy task ids locked in at start — can't be un-flagged today. */
   lockedHeavy: string[];
+  /** Hours-as-minutes the user says they can work today. */
+  capacityMinutes?: number;
 }
 
 export interface GameState {

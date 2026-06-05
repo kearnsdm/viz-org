@@ -363,6 +363,22 @@ body {
 .credit-card {
   border-left: 4px solid var(--accent);
 }
+.capacity-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.cap-hours {
+  width: 64px;
+}
+.snoozed {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
 .credit-bar {
   height: 10px;
   background: var(--bg-soft);
