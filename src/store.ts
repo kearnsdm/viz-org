@@ -2,7 +2,7 @@ import { createContext, useContext } from "react";
 import type { AppState, CandidateTask, Project, Task, Urgency } from "./types";
 import { addBadges, availableCredits, completeFocus, completeTask, emptyGame, taskPoints, withGame } from "./game";
 
-const STORAGE_KEY = "viz-org-state-v1";
+export const STORAGE_KEY = "viz-org-state-v1";
 
 export const PALETTE = [
   "#6366f1", // indigo

@@ -22,9 +22,7 @@ export function SyncDialog({ onClose }: { onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const [paste, setPaste] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  const [url, setUrl] = useState(config?.url ?? "");
-  const [key, setKey] = useState(config?.key ?? "");
+  const [token, setToken] = useState("");
 
   const taskCount = state.projects.reduce((s, p) => s + p.tasks.length, 0);
 
@@ -56,60 +54,61 @@ export function SyncDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const doConnect = () => {
-    const trimmed = url.trim();
-    if (!trimmed || !key.trim()) return;
-    if (!trimmed.startsWith("https://")) {
-      if (!confirm("Your sync URL isn't https:// — most browsers will block it. Connect anyway?")) return;
-    }
-    connect({ url: trimmed, key: key.trim() });
-  };
-
   return (
     <div className="overlay" onClick={onClose}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <h2>Sync &amp; backup</h2>
 
-        {/* Automatic sync */}
+        {/* Automatic cross-device sync via GitHub */}
         <p className="muted">
-          <strong>Automatic sync.</strong> Point this at the sync file on your own site and every device
-          stays in step on its own.
+          <strong>Cross-device sync (GitHub).</strong> Connect each device with the same token and they all
+          share one board automatically.
         </p>
-        <label className="field">
-          Sync URL
-          <input
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://yoursite.com/viz-sync.php"
-          />
-        </label>
-        <label className="field">
-          Passphrase
-          <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="the secret you set in the PHP file" />
-        </label>
-        <div className="sync-status muted">{statusText(status.phase, status.at, status.message)}</div>
-        <div className="dialog__actions" style={{ marginTop: 8 }}>
-          {config ? (
-            <>
+
+        {config ? (
+          <>
+            <div className="sync-status muted">{statusText(status.phase, status.at, status.message)}</div>
+            <p className="muted" style={{ fontSize: 12 }}>
+              Connected ✓ — board stored in a private gist. Use the same token on your other devices.
+            </p>
+            <div className="dialog__actions" style={{ marginTop: 8 }}>
               <button className="btn btn-ghost" onClick={disconnect}>
                 Disconnect
               </button>
               <button className="btn btn-primary" onClick={syncNow}>
                 Sync now
               </button>
-            </>
-          ) : (
-            <button className="btn btn-primary" onClick={doConnect} disabled={!url.trim() || !key.trim()}>
-              Connect
-            </button>
-          )}
-        </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <label className="field">
+              GitHub token (with “gist” access)
+              <input
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="ghp_…"
+                autoComplete="off"
+              />
+            </label>
+            <div className="sync-status muted">{statusText(status.phase, status.at, status.message)}</div>
+            <p className="muted" style={{ fontSize: 12 }}>
+              Need one? github.com/settings/tokens → <em>Generate new token (classic)</em> → check only{" "}
+              <strong>gist</strong> → generate → paste it here. It's free and stays on this device.
+            </p>
+            <div className="dialog__actions" style={{ marginTop: 8 }}>
+              <button className="btn btn-primary" onClick={() => connect(token.trim())} disabled={!token.trim()}>
+                Connect
+              </button>
+            </div>
+          </>
+        )}
 
         <hr style={{ border: "none", borderTop: "1px solid var(--border)", margin: "18px 0" }} />
 
         {/* Manual backup / transfer */}
         <p className="muted">
-          <strong>Manual backup.</strong> No server needed — copy this code and paste it on another device.
+          <strong>Manual backup.</strong> No account needed — copy this code and paste it on another device.
         </p>
         <label className="field">
           This device's board ({taskCount} task{taskCount === 1 ? "" : "s"})

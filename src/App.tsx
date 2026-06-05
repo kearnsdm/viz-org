@@ -5,10 +5,11 @@ import { ProjectPanel } from "./components/ProjectPanel";
 import { AddProjectDialog } from "./components/AddProjectDialog";
 import { SyncDialog } from "./components/SyncDialog";
 import { TodayView } from "./components/TodayView";
-import { StoreContext, loadState, reducer, saveState, useStore } from "./store";
+import { STORAGE_KEY, StoreContext, loadState, reducer, saveState, useStore } from "./store";
 import { availableCredits, badgeById, level, withGame } from "./game";
 import {
   SyncContext,
+  findOrCreateGist,
   loadSyncConfig,
   pullRemoteRetrying,
   pushRemoteRetrying,
@@ -163,6 +164,21 @@ export function App() {
     saveState(state);
   }, [state]);
 
+  // Live-sync across tabs/windows on the same browser (same-computer screens).
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY || !e.newValue) return;
+      if (e.newValue === JSON.stringify(latest.current)) return;
+      try {
+        dispatch({ type: "replaceState", state: JSON.parse(e.newValue) });
+      } catch {
+        /* ignore malformed */
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   // When sync is configured (or reconfigured), pull the remote board. If the
   // server has nothing yet, seed it with this device's board.
   useEffect(() => {
@@ -221,9 +237,14 @@ export function App() {
     };
   }, [config, pushNow]);
 
-  const connect = useCallback((cfg: SyncConfig) => {
-    saveSyncConfig(cfg);
-    setConfig(cfg);
+  const connect = useCallback((token: string) => {
+    setStatus({ phase: "syncing" });
+    findOrCreateGist(token, latest.current)
+      .then((cfg) => {
+        saveSyncConfig(cfg);
+        setConfig(cfg);
+      })
+      .catch((e) => setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" }));
   }, []);
   const disconnect = useCallback(() => {
     saveSyncConfig(null);
