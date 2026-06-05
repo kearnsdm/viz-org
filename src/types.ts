@@ -22,6 +22,8 @@ export interface Task {
   heavy?: boolean;
   /** The smallest 2-minute first move, captured to lower activation energy. */
   firstStep?: string;
+  /** Deep link back to the source (e.g. the email this came from). */
+  link?: string;
   createdAt: number;
   /** Where the task came from, e.g. "email", "manual". */
   source?: string;
@@ -52,6 +54,8 @@ export interface CandidateTask {
   due?: string;
   /** Estimated time to do this task, in minutes. */
   estimateMinutes?: number;
+  /** Deep link back to the source email. */
+  link?: string;
   /** The email subject / sender this candidate was distilled from. */
   from: string;
 }

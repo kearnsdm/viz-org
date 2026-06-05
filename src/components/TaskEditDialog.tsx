@@ -26,6 +26,7 @@ export function TaskEditDialog({
   const [due, setDue] = useState(task.due ?? "");
   const [est, setEst] = useState(task.estimateMinutes ? String(task.estimateMinutes) : "");
   const [notes, setNotes] = useState(task.notes ?? "");
+  const [link, setLink] = useState(task.link ?? "");
   const heavyLocked = lockedHeavyIds(state).includes(task.id);
 
   const save = () => {
@@ -39,6 +40,7 @@ export function TaskEditDialog({
         due: due || undefined,
         estimateMinutes: est ? Number(est) : undefined,
         notes: notes.trim() || undefined,
+        link: link.trim() || undefined,
       },
     });
     onClose();
@@ -92,6 +94,16 @@ export function TaskEditDialog({
         <label className="field">
           Notes / details
           <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} className="import-textarea" />
+        </label>
+
+        <label className="field">
+          Source link (email / doc)
+          <input value={link} onChange={(e) => setLink(e.target.value)} placeholder="https://…" />
+          {link.trim() && (
+            <a href={link} target="_blank" rel="noopener noreferrer" className="muted" style={{ fontSize: 12 }}>
+              ✉ open link
+            </a>
+          )}
         </label>
 
         <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>

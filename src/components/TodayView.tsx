@@ -75,6 +75,17 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
             <span className={`pill pill-${task.urgency}`}>{task.urgency}</span>
             {task.estimateMinutes ? <span className="pill pill-time">⏱ {formatDuration(task.estimateMinutes)}</span> : null}
             <span className="pill pill-points">+{taskPoints(task)} pts</span>
+            {task.link && (
+              <a
+                className="pill pill-link"
+                href={task.link}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                ✉ open
+              </a>
+            )}
             {task.due && (
               <span className={`muted ${overdue ? "overdue" : ""}`}>
                 {overdue ? "overdue · " : "due "}

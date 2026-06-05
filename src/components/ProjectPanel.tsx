@@ -43,6 +43,17 @@ function TaskRow({ projectId, task, onEdit }: { projectId: string; task: Task; o
             <span className="pill pill-time">⏱ {formatDuration(task.estimateMinutes)}</span>
           ) : null}
           {task.source === "email" && <span className="pill pill-email">from email</span>}
+          {task.link && (
+            <a
+              className="pill pill-link"
+              href={task.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+            >
+              ✉ open
+            </a>
+          )}
         </span>
       </div>
       <div className="task-row__actions">

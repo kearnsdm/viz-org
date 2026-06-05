@@ -631,6 +631,14 @@ body {
   background: #26314f;
   color: #9fb4e6;
 }
+.pill-link {
+  background: #23314a;
+  color: #8fb6ff;
+  text-decoration: none;
+}
+.pill-link:hover {
+  filter: brightness(1.2);
+}
 
 .link-chip {
   border: 1px solid var(--border);

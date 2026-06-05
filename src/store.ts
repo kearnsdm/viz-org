@@ -345,6 +345,7 @@ export function reducer(state: AppState, action: Action): AppState {
         urgency: candidate.urgency,
         due: candidate.due,
         estimateMinutes: candidate.estimateMinutes,
+        link: candidate.link,
         source: "email",
       });
       return {
@@ -428,6 +429,7 @@ export function decodeCandidates(input: string): CandidateTask[] {
           : typeof c.estimate === "number"
             ? c.estimate
             : undefined,
+      link: typeof c.link === "string" ? c.link : undefined,
       from: typeof c.from === "string" ? c.from : "Imported",
     }));
 }
