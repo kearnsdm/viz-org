@@ -70,6 +70,8 @@ export function WeekStrip() {
         const cap = dayCapacityMinutes(state, iso);
         const over = !!cap && planned > cap;
         const free = cap ? Math.max(0, cap - planned) : undefined;
+        const setCap = (minutes: number) =>
+          dispatch({ type: "setDayCapacity", date: iso, minutes: Math.max(0, minutes) });
         return (
           <div
             key={iso}
@@ -86,6 +88,9 @@ export function WeekStrip() {
               <span className="day-box__date muted">{sub}</span>
             </div>
             <div className="day-box__cap">
+              <button className="cap-step" title="Half hour less" onClick={() => setCap((cap ?? 0) - 30)}>
+                −
+              </button>
               <input
                 type="number"
                 min={0}
@@ -93,10 +98,11 @@ export function WeekStrip() {
                 placeholder="hrs"
                 title="Hours available this day"
                 value={cap != null ? +(cap / 60).toFixed(1) : ""}
-                onChange={(e) =>
-                  dispatch({ type: "setDayCapacity", date: iso, minutes: Math.round(Number(e.target.value) * 60) })
-                }
+                onChange={(e) => setCap(e.target.value === "" ? 0 : Math.round(Number(e.target.value) * 60))}
               />
+              <button className="cap-step" title="Half hour more" onClick={() => setCap((cap ?? 0) + 30)}>
+                +
+              </button>
               <span className={`muted ${over ? "overdue" : ""}`}>
                 {cap
                   ? over

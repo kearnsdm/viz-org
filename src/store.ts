@@ -255,8 +255,9 @@ export function reducer(state: AppState, action: Action): AppState {
       let next: AppState = { ...state, dayCapacities: caps };
       if (date === today()) {
         // Mirror into the legacy field so older saves/clients stay coherent.
+        // 0 means "unset" — store undefined so the input can go back to empty.
         const base = state.day && state.day.date === date ? state.day : { date, started: false, lockedHeavy: [] as string[] };
-        next = { ...next, day: { ...base, date, capacityMinutes: minutes } };
+        next = { ...next, day: { ...base, date, capacityMinutes: minutes > 0 ? minutes : undefined } };
       }
       return next;
     }
@@ -469,7 +470,7 @@ export function dayCapacityMinutes(state: AppState, date?: string): number | und
   const v = state.dayCapacities?.[d];
   if (typeof v === "number" && v > 0) return v;
   // Legacy location: today's capacity used to live on the day plan.
-  if (state.day && state.day.date === d && typeof state.day.capacityMinutes === "number") {
+  if (state.day && state.day.date === d && typeof state.day.capacityMinutes === "number" && state.day.capacityMinutes > 0) {
     return state.day.capacityMinutes;
   }
   return undefined;

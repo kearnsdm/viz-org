@@ -506,6 +506,38 @@ body {
   box-shadow: 0 -2px 0 0 var(--accent);
 }
 
+/* ---- Capacity steppers ---- */
+.cap-step {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  line-height: 1;
+  font-size: 14px;
+  cursor: pointer;
+  flex: none;
+}
+.cap-step:hover {
+  border-color: var(--accent);
+}
+/* The −/+ steppers replace the unreliable native spinner */
+.day-box__cap input::-webkit-outer-spin-button,
+.day-box__cap input::-webkit-inner-spin-button,
+.cap-hours::-webkit-outer-spin-button,
+.cap-hours::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.day-box__cap input[type="number"],
+.cap-hours[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+  text-align: center;
+}
+
 /* ---- Capture bookmarklet ---- */
 .bookmarklet {
   display: inline-block;

@@ -292,6 +292,13 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
               {h}h
             </button>
           ))}
+          <button
+            className="cap-step"
+            title="Half hour less"
+            onClick={() => dispatch({ type: "setDayCapacity", minutes: Math.max(0, (cap ?? 0) - 30) })}
+          >
+            −
+          </button>
           <input
             className="cap-hours"
             type="number"
@@ -299,8 +306,20 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
             step={0.5}
             value={cap != null ? +(cap / 60).toFixed(1) : ""}
             placeholder="hrs"
-            onChange={(e) => dispatch({ type: "setDayCapacity", minutes: Math.round(Number(e.target.value) * 60) })}
+            onChange={(e) =>
+              dispatch({
+                type: "setDayCapacity",
+                minutes: e.target.value === "" ? 0 : Math.round(Number(e.target.value) * 60),
+              })
+            }
           />
+          <button
+            className="cap-step"
+            title="Half hour more"
+            onClick={() => dispatch({ type: "setDayCapacity", minutes: (cap ?? 0) + 30 })}
+          >
+            +
+          </button>
         </div>
 
         {cap != null && cap > 0 && (
