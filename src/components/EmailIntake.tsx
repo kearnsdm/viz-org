@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { decodeCandidates, formatDuration, useStore } from "../store";
+import { formatDuration, useStore } from "../store";
+import { useSync } from "../sync";
 
 /** The one-click capture bookmarklet, targeting this running copy of the app. */
 function bookmarkletCode(): string {
@@ -18,11 +19,11 @@ function bookmarkletCode(): string {
 
 export function EmailIntake() {
   const { state, dispatch } = useStore();
-  const [showImport, setShowImport] = useState(false);
+  const { config, checkInbox } = useSync();
   const [showCapture, setShowCapture] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [code, setCode] = useState("");
-  const [importError, setImportError] = useState<string | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [checkMsg, setCheckMsg] = useState<string | null>(null);
   const bmRef = useRef<HTMLAnchorElement | null>(null);
 
   // Set the javascript: href imperatively — React warns on javascript: URLs.
@@ -32,19 +33,17 @@ export function EmailIntake() {
 
   const adminId = state.projects.find((p) => p.isAdmin)?.id;
 
-  const runImport = () => {
-    setImportError(null);
+  const check = async () => {
+    setChecking(true);
+    setCheckMsg(null);
     try {
-      const candidates = decodeCandidates(code);
-      if (candidates.length === 0) {
-        setImportError("No tasks found in that code.");
-        return;
-      }
-      dispatch({ type: "pullEmail", candidates });
-      setCode("");
-      setShowImport(false);
+      const n = await checkInbox();
+      setCheckMsg(n > 0 ? `${n} new task${n === 1 ? "" : "s"} ✓` : "Nothing new");
     } catch {
-      setImportError("That code couldn't be read. Paste the whole thing and try again.");
+      setCheckMsg("Couldn't reach sync — try again");
+    } finally {
+      setChecking(false);
+      setTimeout(() => setCheckMsg(null), 4000);
     }
   };
 
@@ -54,16 +53,21 @@ export function EmailIntake() {
         <h2>Email Intake</h2>
         <div className="header-buttons">
           <button className="btn btn-sm btn-ghost" onClick={() => setShowCapture((v) => !v)}>
-            ✉ Capture setup
+            ✉ Bookmarklet
           </button>
-          <button className="btn btn-sm" onClick={() => setShowImport((v) => !v)}>
-            Import
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={check}
+            disabled={checking || !config}
+            title={config ? "Pull anything a Claude email scan has dropped off" : "Connect Backup / Sync first"}
+          >
+            {checking ? "Checking…" : "Check for new tasks"}
           </button>
         </div>
       </div>
       <p className="muted card__subtitle">
-        Candidate tasks from your real inbox — via the capture bookmarklet or a pasted import code. File each
-        into a project or admin.
+        Tasks from your real inbox land here — automatically after a Claude email scan, or one at a time with
+        the bookmarklet. {checkMsg && <strong>{checkMsg}</strong>}
       </p>
       {showCapture && (
         <div className="import-box">
@@ -96,31 +100,10 @@ export function EmailIntake() {
           </div>
         </div>
       )}
-      {showImport && (
-        <div className="import-box">
-          <p className="muted">Paste an import code (e.g. real tasks pulled from your mailbox):</p>
-          <textarea
-            className="import-textarea"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="Paste code here…"
-            rows={3}
-          />
-          {importError && <p className="import-error">{importError}</p>}
-          <div className="import-actions">
-            <button className="btn btn-sm btn-ghost" onClick={() => setShowImport(false)}>
-              Cancel
-            </button>
-            <button className="btn btn-sm btn-primary" onClick={runImport} disabled={!code.trim()}>
-              Load tasks
-            </button>
-          </div>
-        </div>
-      )}
       {state.inbox.length === 0 ? (
         <p className="muted empty-hint">
-          Inbox clear. Capture an open email with the bookmarklet (<em>✉ Capture setup</em>), or paste an
-          import code from a Claude email scan.
+          Inbox clear. Ask Claude to <em>scan my email</em>, then hit <em>Check for new tasks</em> — or capture
+          an open email with the bookmarklet.
         </p>
       ) : (
         <ul className="candidate-list">
@@ -134,6 +117,11 @@ export function EmailIntake() {
                   {c.estimateMinutes ? (
                     <span className="pill pill-time">⏱ {formatDuration(c.estimateMinutes)}</span>
                   ) : null}
+                  {c.link && (
+                    <a className="pill pill-link" href={c.link} target="_blank" rel="noopener noreferrer">
+                      ✉ open
+                    </a>
+                  )}
                   {c.due && <span className="muted">due {c.due}</span>}
                 </span>
               </div>

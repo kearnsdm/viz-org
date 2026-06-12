@@ -163,6 +163,8 @@ export interface SyncContextValue {
   connect: (token: string) => void;
   disconnect: () => void;
   syncNow: () => void;
+  /** Drain the gist drop box now; resolves to the number of new candidates. */
+  checkInbox: () => Promise<number>;
 }
 
 export const SyncContext = createContext<SyncContextValue | null>(null);

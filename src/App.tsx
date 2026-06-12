@@ -240,7 +240,7 @@ export function App() {
         else await pushRemoteRetrying(config, latest.current);
         if (!cancelled) {
           setStatus({ phase: "ok", at: Date.now() });
-          void ingestInbox();
+          ingestInbox().catch(() => {});
         }
       } catch (e) {
         if (!cancelled) setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" });
@@ -256,21 +256,24 @@ export function App() {
   // Drain the gist drop box: candidate tasks left there by an outside helper
   // (e.g. a Claude email scan) flow into Email Intake, then the box is
   // emptied. The seenCandidateIds guard in the reducer makes this idempotent,
-  // so a failed clear just retries harmlessly on the next focus.
-  const ingestInbox = useCallback(async () => {
-    if (!config) return;
+  // so a failed clear just retries harmlessly on the next check. Returns how
+  // many candidates were actually new; throws on network trouble so the
+  // explicit "Check now" button can show an error.
+  const ingestInbox = useCallback(async (): Promise<number> => {
+    if (!config) return 0;
+    const raw = await pullInbox(config);
+    if (!raw) return 0;
+    let fresh = 0;
     try {
-      const raw = await pullInbox(config);
-      if (!raw) return;
-      try {
-        const candidates = decodeCandidates(raw);
-        if (candidates.length) dispatch({ type: "pullEmail", candidates });
-      } finally {
-        await clearInbox(config);
-      }
-    } catch {
-      /* transient network/parse trouble — next focus tries again */
+      const candidates = decodeCandidates(raw);
+      const seen = new Set(latest.current.seenCandidateIds ?? []);
+      const inInbox = new Set(latest.current.inbox.map((c) => c.id));
+      fresh = candidates.filter((c) => !seen.has(c.id) && !inInbox.has(c.id)).length;
+      if (candidates.length) dispatch({ type: "pullEmail", candidates });
+    } finally {
+      await clearInbox(config);
     }
+    return fresh;
   }, [config]);
 
   const pushNow = useCallback(() => {
@@ -295,7 +298,7 @@ export function App() {
     const handler = () => {
       if (hydrated.current) {
         pushNow();
-        void ingestInbox();
+        ingestInbox().catch(() => {});
       }
     };
     window.addEventListener("online", handler);
@@ -324,7 +327,7 @@ export function App() {
 
   return (
     <StoreContext.Provider value={{ state, dispatch }}>
-      <SyncContext.Provider value={{ config, status, connect, disconnect, syncNow }}>
+      <SyncContext.Provider value={{ config, status, connect, disconnect, syncNow, checkInbox: ingestInbox }}>
         <Workspace />
       </SyncContext.Provider>
     </StoreContext.Provider>

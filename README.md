@@ -34,8 +34,8 @@ haven't committed yet — an invitation to plan.
   file each one into a project or straight into Admin.
 - **Email capture** — a `#capture` URL (and a drag-to-bookmarks-bar bookmarklet
   for Outlook on the web / Gmail) that drops an email's subject + deep link into
-  Email Intake in one click. Batches can also arrive as an import code — e.g.
-  action items distilled from your mailbox in a Claude chat.
+  Email Intake in one click. Batches (e.g. a Claude email scan) arrive through
+  the gist drop box automatically.
 
 Everything persists locally (browser `localStorage`), so your board is there
 when you come back.
@@ -65,12 +65,13 @@ npm run lint     # type-check only
 3. **Plan your day** — the **Daily Plan** card on the right surfaces what's
    pressing today across the whole board. Check items off there or jump to their
    project.
-4. **Import from email** — in **Email Intake**, paste an import code (raw JSON
-   or base64) of candidate tasks, then file each into a project or Admin.
-5. **Capture from your real inbox** — *Email Intake → ✉ Capture setup*, drag the
-   bookmarklet to your bookmarks bar. With an email open (Outlook web or Gmail),
-   click it: the subject and a link back to the message arrive as a candidate
-   task. Any tool can also construct the URL directly:
+4. **Get tasks from email** — ask Claude to *scan my email*; the distilled
+   action items appear in **Email Intake** automatically (or hit **Check for
+   new tasks** to pull immediately). File each into a project or Admin.
+5. **Capture a single email** — *Email Intake → ✉ Bookmarklet*, drag the button
+   to your bookmarks bar. With an email open (Outlook web or Gmail), click it:
+   the subject and a link back to the message arrive as a candidate task. Any
+   tool can also construct the URL directly:
    `…/#capture?title=…&link=…&due=yyyy-mm-dd&urgency=high&estimate=30&notes=…&from=…`
 6. **Plan the week** — give each day box the hours you have, then drag tasks
    from Today onto the days you'll actually do them.
@@ -98,11 +99,12 @@ src/
 ### Note on email intake
 
 The app is a static page with no backend, so it cannot search a mailbox itself.
-Real email flows in through three doors: the **capture bookmarklet / `#capture`
-URL** (one email at a time, from the browser), **import codes** — a JSON array
-of `CandidateTask`s (optionally base64-encoded) pasted into Email Intake — and
-the **gist drop box**: when sync is connected, the app watches a second file
-(`viz-org-inbox.json`) in the same private gist on load/focus. Anything that can
-write to the gist (e.g. a Claude email scan with the same token) can leave
-candidates there and they flow into Email Intake automatically; ingested ids are
-remembered so nothing imports twice.
+Real email flows in through exactly two doors: the **capture bookmarklet /
+`#capture` URL** (one email at a time, from the browser) and the **gist drop
+box** (batches): when sync is connected, the app watches a second file
+(`viz-org-inbox.json`, a JSON array of `CandidateTask`s, optionally
+base64-encoded) in the same private gist — on load, on window focus, and via the
+*Check for new tasks* button. Anything that can write to the gist (e.g. a Claude
+email scan with the same token) can leave candidates there and they flow into
+Email Intake automatically; ingested ids are remembered so nothing imports
+twice.
