@@ -27,6 +27,9 @@ export interface Task {
   /** Hidden from "Today" until this date (yyyy-mm-dd) — a soft snooze that
    * doesn't change the real due date. */
   snoozeUntil?: string;
+  /** The day (yyyy-mm-dd) the user has planned to do this — places the task in
+   * that day's box on the week strip. Independent of the due date. */
+  scheduledFor?: string;
   createdAt: number;
   /** Where the task came from, e.g. "email", "manual". */
   source?: string;
@@ -76,6 +79,8 @@ export interface AppState {
   game?: GameState;
   /** Today's committed plan: the locked frog + heavy picks. */
   day?: DayPlan;
+  /** Hours-as-minutes available per day (yyyy-mm-dd), for the week strip. */
+  dayCapacities?: Record<string, number>;
 }
 
 export interface DayPlan {
@@ -89,6 +94,8 @@ export interface DayPlan {
   lockedHeavy: string[];
   /** Hours-as-minutes the user says they can work today. */
   capacityMinutes?: number;
+  /** Manual ordering of today's list (task ids, drag-to-reorder). */
+  order?: string[];
 }
 
 export interface GameState {

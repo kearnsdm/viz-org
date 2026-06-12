@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { formatDuration, projectMinutes, projectWeight, useStore } from "../store";
+import { formatDuration, isoDate, projectMinutes, projectWeight, useStore } from "../store";
 import { TaskEditDialog } from "./TaskEditDialog";
 import type { Task, Urgency } from "../types";
 
@@ -19,7 +19,7 @@ export const DURATIONS: { label: string; min: number }[] = [
 
 function TaskRow({ projectId, task, onEdit }: { projectId: string; task: Task; onEdit: () => void }) {
   const { dispatch, state } = useStore();
-  const overdue = task.due && !task.done && task.due < new Date().toISOString().slice(0, 10);
+  const overdue = task.due && !task.done && task.due < isoDate(new Date());
 
   return (
     <li className={`task-row ${task.done ? "is-done" : ""}`}>

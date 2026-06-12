@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { lockedHeavyIds, useStore } from "../store";
+import { isoDate, lockedHeavyIds, useStore } from "../store";
 import { DURATIONS } from "./ProjectPanel";
 import type { Task, Urgency } from "../types";
 
@@ -8,7 +8,7 @@ const URGENCIES: Urgency[] = ["low", "normal", "high", "urgent"];
 function isoShift(days: number): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return isoDate(d);
 }
 
 export function TaskEditDialog({
@@ -27,6 +27,7 @@ export function TaskEditDialog({
   const [est, setEst] = useState(task.estimateMinutes ? String(task.estimateMinutes) : "");
   const [notes, setNotes] = useState(task.notes ?? "");
   const [link, setLink] = useState(task.link ?? "");
+  const [scheduled, setScheduled] = useState(task.scheduledFor ?? "");
   const heavyLocked = lockedHeavyIds(state).includes(task.id);
 
   const save = () => {
@@ -41,6 +42,7 @@ export function TaskEditDialog({
         estimateMinutes: est ? Number(est) : undefined,
         notes: notes.trim() || undefined,
         link: link.trim() || undefined,
+        scheduledFor: scheduled || undefined,
       },
     });
     onClose();
@@ -65,6 +67,16 @@ export function TaskEditDialog({
           <button className="btn btn-sm btn-ghost" onClick={() => setDue(isoShift(1))}>Tomorrow</button>
           <button className="btn btn-sm btn-ghost" onClick={() => setDue(isoShift(7))}>+1 week</button>
           <button className="btn btn-sm btn-ghost" onClick={() => setDue("")}>Clear</button>
+        </div>
+
+        <label className="field">
+          Planned day — places it in that day's box on the week strip
+          <input type="date" value={scheduled} onChange={(e) => setScheduled(e.target.value)} />
+        </label>
+        <div className="quick-due">
+          <button className="btn btn-sm btn-ghost" onClick={() => setScheduled(isoShift(0))}>Today</button>
+          <button className="btn btn-sm btn-ghost" onClick={() => setScheduled(isoShift(1))}>Tomorrow</button>
+          <button className="btn btn-sm btn-ghost" onClick={() => setScheduled("")}>Unplanned</button>
         </div>
 
         <div className="edit-row">

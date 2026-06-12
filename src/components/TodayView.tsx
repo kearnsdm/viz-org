@@ -5,6 +5,7 @@ import {
   dayFrogId,
   formatDuration,
   isDayStarted,
+  isoDate,
   lockedHeavyIds,
   snoozedForToday,
   useStore,
@@ -22,6 +23,7 @@ import {
 import { FocusTimer } from "./FocusTimer";
 import { UnstickPanel } from "./UnstickPanel";
 import { TaskEditDialog } from "./TaskEditDialog";
+import { WeekStrip, readTaskDrag, setTaskDrag } from "./WeekStrip";
 
 function pickFrog(plan: PlanItem[]): PlanItem | null {
   if (plan.length === 0) return null;
@@ -34,7 +36,7 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
   const { state, dispatch } = useStore();
   const game = withGame(state.game);
   const plan = buildDailyPlan(state);
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = isoDate(new Date());
   const credits = availableCredits(game);
   const pct = Math.round(((POINTS_PER_CREDIT - pointsToNextCredit(game)) / POINTS_PER_CREDIT) * 100);
   const totalMinutes = plan.reduce((s, { task }) => s + (task.estimateMinutes ?? 0), 0);
@@ -52,11 +54,22 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
   const [stuck, setStuck] = useState<PlanItem | null>(null);
   const [edit, setEdit] = useState<PlanItem | null>(null);
   const [showSnoozed, setShowSnoozed] = useState(false);
+  const [dragTaskId, setDragTaskId] = useState<string | null>(null);
+  const [overTaskId, setOverTaskId] = useState<string | null>(null);
+
+  // Drop the dragged task just above the target row and persist the order.
+  const dropBefore = (dragId: string, targetId: string) => {
+    if (dragId === targetId) return;
+    const ids = plan.map((i) => i.task.id).filter((id) => id !== dragId);
+    const at = ids.indexOf(targetId);
+    ids.splice(at < 0 ? ids.length : at, 0, dragId);
+    dispatch({ type: "reorderToday", ids });
+  };
 
   const tomorrow = (() => {
     const d = new Date();
     d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
+    return isoDate(d);
   })();
   const cap = dayCapacityMinutes(state);
   const planned = totalMinutes;
@@ -100,8 +113,51 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
     const overdue = task.due && task.due < todayStr;
     const heavyLocked = started && locked.includes(task.id);
     const isChosenFrog = frogId === task.id;
+    const draggable = !isFrog;
     return (
-      <li key={task.id} className={`plan-item ${isFrog ? "is-frog" : ""}`}>
+      <li
+        key={task.id}
+        className={`plan-item ${isFrog ? "is-frog" : ""} ${dragTaskId === task.id ? "is-dragging" : ""} ${
+          draggable && overTaskId === task.id && dragTaskId ? "is-drop-before" : ""
+        }`}
+        draggable={draggable}
+        onDragStart={
+          draggable
+            ? (e) => {
+                setTaskDrag(e, task.id, project.id);
+                setDragTaskId(task.id);
+              }
+            : undefined
+        }
+        onDragEnd={() => {
+          setDragTaskId(null);
+          setOverTaskId(null);
+        }}
+        onDragOver={
+          draggable
+            ? (e) => {
+                if (dragTaskId === task.id) return;
+                e.preventDefault();
+                if (overTaskId !== task.id) setOverTaskId(task.id);
+              }
+            : undefined
+        }
+        onDrop={
+          draggable
+            ? (e) => {
+                e.preventDefault();
+                const drag = readTaskDrag(e);
+                if (drag) dropBefore(drag.taskId, task.id);
+                setOverTaskId(null);
+              }
+            : undefined
+        }
+      >
+        {draggable && (
+          <span className="drag-handle" title="Drag to reorder, or onto a day box above">
+            ⋮⋮
+          </span>
+        )}
         <input
           type="checkbox"
           checked={task.done}
@@ -204,27 +260,8 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
         )}
       </div>
 
-      {/* Build Credits */}
-      <div className="card credit-card">
-        <div className="card__header">
-          <h2>Build Bank</h2>
-          <span className="muted">Lvl {level(game.points)} · {game.points} pts</span>
-        </div>
-        <p className="muted card__subtitle">
-          Do the work, earn the right to keep building viz-org. {POINTS_PER_CREDIT} points = 1 build session.
-        </p>
-        <div className="credit-bar">
-          <div className="credit-bar__fill" style={{ width: `${pct}%` }} />
-        </div>
-        <div className="credit-row">
-          <span className="muted">{pointsToNextCredit(game)} pts to next credit</span>
-          <span className="credits-have">{credits} build credit{credits === 1 ? "" : "s"} ready</span>
-          <button className="btn btn-sm btn-primary" disabled={credits < 1} onClick={() => dispatch({ type: "redeemCredit" })}>
-            Redeem a build session
-          </button>
-        </div>
-        {credits >= 1 && <p className="redeem-note">🛠️ You've earned it — bring a build session to our next chat.</p>}
-      </div>
+      {/* Week strip: the next 7 days as boxes of time */}
+      <WeekStrip />
 
       {/* Frog */}
       {frog && (
@@ -330,6 +367,28 @@ export function TodayView({ onOpenProject }: { onOpenProject: (id: string) => vo
             )}
           </div>
         )}
+      </div>
+
+      {/* Build Credits */}
+      <div className="card credit-card">
+        <div className="card__header">
+          <h2>Build Bank</h2>
+          <span className="muted">Lvl {level(game.points)} · {game.points} pts</span>
+        </div>
+        <p className="muted card__subtitle">
+          Do the work, earn the right to keep building viz-org. {POINTS_PER_CREDIT} points = 1 build session.
+        </p>
+        <div className="credit-bar">
+          <div className="credit-bar__fill" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="credit-row">
+          <span className="muted">{pointsToNextCredit(game)} pts to next credit</span>
+          <span className="credits-have">{credits} build credit{credits === 1 ? "" : "s"} ready</span>
+          <button className="btn btn-sm btn-primary" disabled={credits < 1} onClick={() => dispatch({ type: "redeemCredit" })}>
+            Redeem a build session
+          </button>
+        </div>
+        {credits >= 1 && <p className="redeem-note">🛠️ You've earned it — bring a build session to our next chat.</p>}
       </div>
 
       {/* Badges */}

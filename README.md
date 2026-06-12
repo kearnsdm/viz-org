@@ -23,10 +23,18 @@ haven't committed yet — an invitation to plan.
 - **Tasks** — live inside projects. Each has an urgency (low/normal/high/urgent),
   an optional due date, and a done state. Click any project box to expand it and
   plan its tasks.
-- **Daily Plan** — a sheet that pulls the pressing tasks (overdue, due soon, or
-  urgent) from *every* project plus admin, ordered by what needs attention first.
+- **Daily Plan** — a sheet that pulls the pressing tasks (overdue, due soon,
+  urgent, or planned for today) from *every* project plus admin, ordered by what
+  needs attention first. Drag rows to reorder; the order sticks for the day.
+- **Week strip** — the next 7 days as day boxes, each with its own hours
+  available, a planned-vs-capacity bar, and the tasks scheduled to it. Drag a
+  task from Today onto a day to plan it there (or between days); tasks due or
+  snoozed to a day appear in its box automatically.
 - **Email Intake** — pull candidate action items "from email" on request, then
   file each one into a project or straight into Admin.
+- **Email capture** — a `#capture` URL (and a drag-to-bookmarks-bar bookmarklet
+  for Outlook on the web / Gmail) that drops an email's subject + deep link into
+  Email Intake in one click.
 
 Everything persists locally (browser `localStorage`), so your board is there
 when you come back.
@@ -58,6 +66,13 @@ npm run lint     # type-check only
    project.
 4. **Pull from email** — in **Email Intake**, hit *Pull from email* to surface
    candidate tasks, then file each into a project or Admin.
+5. **Capture from your real inbox** — *Email Intake → ✉ Capture setup*, drag the
+   bookmarklet to your bookmarks bar. With an email open (Outlook web or Gmail),
+   click it: the subject and a link back to the message arrive as a candidate
+   task. Any tool can also construct the URL directly:
+   `…/#capture?title=…&link=…&due=yyyy-mm-dd&urgency=high&estimate=30&notes=…&from=…`
+6. **Plan the week** — give each day box the hours you have, then drag tasks
+   from Today onto the days you'll actually do them.
 
 ## Architecture
 
@@ -73,8 +88,9 @@ src/
   components/
     Board.tsx              the dashboard — projects as a treemap of time
     ProjectPanel.tsx       expanded project view: plan & edit tasks
-    DailyPlan.tsx          today's pressing tasks across all projects
-    EmailIntake.tsx        pull & file candidate tasks from email
+    TodayView.tsx          today's pressing tasks across all projects
+    WeekStrip.tsx          the next 7 days as droppable day boxes
+    EmailIntake.tsx        pull & file candidate tasks from email + capture setup
     AddProjectDialog.tsx   create a new project
 ```
 

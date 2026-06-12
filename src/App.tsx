@@ -5,7 +5,8 @@ import { ProjectPanel } from "./components/ProjectPanel";
 import { AddProjectDialog } from "./components/AddProjectDialog";
 import { SyncDialog } from "./components/SyncDialog";
 import { TodayView } from "./components/TodayView";
-import { STORAGE_KEY, StoreContext, loadState, reducer, saveState, useStore } from "./store";
+import { STORAGE_KEY, StoreContext, loadState, reducer, saveState, uid, useStore } from "./store";
+import type { Urgency } from "./types";
 import { availableCredits, badgeById, level, withGame } from "./game";
 import {
   SyncContext,
@@ -109,11 +110,51 @@ function BadgeToast() {
   );
 }
 
+const URGENCIES: Urgency[] = ["low", "normal", "high", "urgent"];
+
 function Workspace() {
+  const { dispatch } = useStore();
   const [tab, setTab] = useState<"today" | "board">("today");
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
+
+  // Capture URL: opening …/#capture?title=…&link=…(&due=&notes=&from=&urgency=&estimate=)
+  // drops a pre-filled candidate into Email Intake. This is what the email
+  // bookmarklet targets, but any tool can construct the link.
+  useEffect(() => {
+    const handle = () => {
+      const hash = window.location.hash;
+      if (!hash.startsWith("#capture")) return;
+      const q = hash.indexOf("?");
+      const params = new URLSearchParams(q >= 0 ? hash.slice(q + 1) : "");
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+      const title = params.get("title")?.trim();
+      if (!title) return;
+      const urgency = params.get("urgency") as Urgency | null;
+      const due = params.get("due");
+      const estimate = Number(params.get("estimate"));
+      dispatch({
+        type: "pullEmail",
+        candidates: [
+          {
+            id: uid("cand"),
+            title,
+            notes: params.get("notes")?.trim() || undefined,
+            urgency: urgency && URGENCIES.includes(urgency) ? urgency : "normal",
+            due: due && /^\d{4}-\d{2}-\d{2}$/.test(due) ? due : undefined,
+            estimateMinutes: Number.isFinite(estimate) && estimate > 0 ? estimate : undefined,
+            link: params.get("link")?.trim() || undefined,
+            from: params.get("from")?.trim() || "Captured from email",
+          },
+        ],
+      });
+      setTab("board"); // Email Intake lives on the Board tab — show the arrival
+    };
+    handle();
+    window.addEventListener("hashchange", handle);
+    return () => window.removeEventListener("hashchange", handle);
+  }, [dispatch]);
 
   return (
     <div className="app">

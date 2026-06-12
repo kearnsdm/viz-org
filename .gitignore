@@ -9,3 +9,6 @@ dist-ssr
 
 # TS build info
 *.tsbuildinfo
+
+# Machine-specific Claude Code launch config (paths into local temp dirs)
+.claude/launch.json

@@ -1,6 +1,8 @@
 import { createContext, useContext } from "react";
 import type { AppState, CandidateTask, Project, Task, Urgency } from "./types";
-import { addBadges, availableCredits, completeFocus, completeTask, emptyGame, taskPoints, withGame } from "./game";
+import { addBadges, availableCredits, completeFocus, completeTask, emptyGame, isoDate, taskPoints, withGame } from "./game";
+
+export { isoDate };
 
 export const STORAGE_KEY = "viz-org-state-v1";
 
@@ -52,7 +54,7 @@ export function projectMinutes(p: Project): number {
 function today(offsetDays = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
-  return d.toISOString().slice(0, 10);
+  return isoDate(d);
 }
 
 function makeTask(title: string, opts: Partial<Task> = {}): Task {
@@ -131,6 +133,8 @@ export function normalizeState(s: AppState): AppState {
     projects: Array.isArray(s.projects) ? s.projects : [],
     inbox: Array.isArray(s.inbox) ? s.inbox : [],
     game: withGame(s.game),
+    day: s.day && typeof s.day === "object" ? s.day : undefined,
+    dayCapacities: s.dayCapacities && typeof s.dayCapacities === "object" ? s.dayCapacities : {},
   };
 }
 
@@ -195,7 +199,9 @@ export type Action =
   | { type: "chooseFrog"; taskId: string }
   | { type: "startDay" }
   | { type: "resetDay" }
-  | { type: "setDayCapacity"; minutes: number }
+  | { type: "setDayCapacity"; minutes: number; date?: string }
+  | { type: "scheduleTask"; projectId: string; taskId: string; date?: string }
+  | { type: "reorderToday"; ids: string[] }
   | { type: "snoozeTask"; projectId: string; taskId: string; until: string }
   | { type: "snoozeMany"; ids: string[]; until: string }
   | { type: "unsnoozeTask"; projectId: string; taskId: string }
@@ -298,9 +304,32 @@ export function reducer(state: AppState, action: Action): AppState {
     case "resetDay":
       return { ...state, day: undefined };
     case "setDayCapacity": {
+      const date = action.date ?? today();
+      const minutes = Math.max(0, action.minutes);
+      const caps = { ...(state.dayCapacities ?? {}) };
+      if (minutes > 0) caps[date] = minutes;
+      else delete caps[date];
+      let next: AppState = { ...state, dayCapacities: caps };
+      if (date === today()) {
+        // Mirror into the legacy field so older saves/clients stay coherent.
+        const base = state.day && state.day.date === date ? state.day : { date, started: false, lockedHeavy: [] as string[] };
+        next = { ...next, day: { ...base, date, capacityMinutes: minutes } };
+      }
+      return next;
+    }
+    case "scheduleTask":
+      return mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tasks: p.tasks.map((t) =>
+          t.id === action.taskId
+            ? { ...t, scheduledFor: action.date, snoozeUntil: action.date ? undefined : t.snoozeUntil }
+            : t,
+        ),
+      }));
+    case "reorderToday": {
       const date = today();
       const base = state.day && state.day.date === date ? state.day : { date, started: false, lockedHeavy: [] as string[] };
-      return { ...state, day: { ...base, date, capacityMinutes: Math.max(0, action.minutes) } };
+      return { ...state, day: { ...base, date, order: action.ids } };
     }
     case "snoozeTask":
       return mapProject(state, action.projectId, (p) => ({
@@ -510,9 +539,13 @@ export function lockedHeavyIds(state: AppState): string[] {
   return isDayStarted(state) ? state.day?.lockedHeavy ?? [] : [];
 }
 
-/** Hours-as-minutes the user can work today, if they've set it. */
-export function dayCapacityMinutes(state: AppState): number | undefined {
-  if (state.day && state.day.date === today() && typeof state.day.capacityMinutes === "number") {
+/** Hours-as-minutes the user can work on a given day (defaults to today). */
+export function dayCapacityMinutes(state: AppState, date?: string): number | undefined {
+  const d = date ?? today();
+  const v = state.dayCapacities?.[d];
+  if (typeof v === "number" && v > 0) return v;
+  // Legacy location: today's capacity used to live on the day plan.
+  if (state.day && state.day.date === d && typeof state.day.capacityMinutes === "number") {
     return state.day.capacityMinutes;
   }
   return undefined;
@@ -558,8 +591,11 @@ export interface PlanItem {
 const URGENCY_RANK: Record<Urgency, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
 
 /**
- * Build today's plan: open tasks that are overdue, due soon, or urgent — pulled
- * from every project (including admin), ordered by what needs attention first.
+ * Build today's plan: open tasks that are overdue, due soon, urgent, or
+ * explicitly scheduled for today — pulled from every project (including
+ * admin), ordered by what needs attention first. A task scheduled to a
+ * *future* day is excluded (it lives in that day's box), and any manual
+ * drag-to-reorder order for today is applied last.
  */
 export function buildDailyPlan(state: AppState): PlanItem[] {
   const horizon = today(); // overdue or due today — deferring to tomorrow drops it off Today
@@ -567,10 +603,12 @@ export function buildDailyPlan(state: AppState): PlanItem[] {
   for (const project of state.projects) {
     for (const task of project.tasks) {
       if (task.done) continue;
+      if (task.scheduledFor && task.scheduledFor > horizon) continue; // planned for a later day
       if (task.snoozeUntil && task.snoozeUntil > horizon) continue; // snoozed out of Today
       const dueSoon = task.due ? task.due <= horizon : false;
       const pressing = task.urgency === "urgent" || task.urgency === "high";
-      if (dueSoon || pressing) items.push({ task, project });
+      const plannedToday = !!task.scheduledFor && task.scheduledFor <= horizon;
+      if (dueSoon || pressing || plannedToday) items.push({ task, project });
     }
   }
   items.sort((a, b) => {
@@ -579,6 +617,47 @@ export function buildDailyPlan(state: AppState): PlanItem[] {
     if (ad !== bd) return ad < bd ? -1 : 1;
     return URGENCY_RANK[a.task.urgency] - URGENCY_RANK[b.task.urgency];
   });
+  const order = state.day?.date === horizon ? state.day.order : undefined;
+  if (order && order.length) {
+    const idx = new Map(order.map((id, i) => [id, i] as const));
+    // Stable sort: dragged tasks keep their chosen spots, the rest keep the
+    // default urgency/due order after them.
+    items.sort(
+      (a, b) =>
+        (idx.get(a.task.id) ?? Number.MAX_SAFE_INTEGER) - (idx.get(b.task.id) ?? Number.MAX_SAFE_INTEGER),
+    );
+  }
+  return items;
+}
+
+// --- Week strip (day boxes) -----------------------------------------------
+
+export type DayBoxReason = "scheduled" | "snoozed" | "due";
+
+export interface DayBoxItem extends PlanItem {
+  /** Why the task appears in this day's box. */
+  reason: DayBoxReason;
+}
+
+/**
+ * Open tasks that belong to a given future day's box: explicitly scheduled
+ * there, snoozed until then, or due that day (shown as a ghost so the load is
+ * honest even before you've planned it).
+ */
+export function tasksForDay(state: AppState, date: string): DayBoxItem[] {
+  const items: DayBoxItem[] = [];
+  for (const project of state.projects) {
+    for (const task of project.tasks) {
+      if (task.done) continue;
+      let reason: DayBoxReason | null = null;
+      if (task.scheduledFor === date) reason = "scheduled";
+      else if (!task.scheduledFor && task.snoozeUntil === date) reason = "snoozed";
+      else if (!task.scheduledFor && task.due === date && (!task.snoozeUntil || task.snoozeUntil <= date)) reason = "due";
+      if (reason) items.push({ task, project, reason });
+    }
+  }
+  const rank: Record<DayBoxReason, number> = { scheduled: 0, snoozed: 1, due: 2 };
+  items.sort((a, b) => rank[a.reason] - rank[b.reason]);
   return items;
 }
 
