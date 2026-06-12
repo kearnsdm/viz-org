@@ -69,12 +69,26 @@ function makeTask(title: string, opts: Partial<Task> = {}): Task {
   };
 }
 
+// Placeholder candidates the pre-2026-06 builds invented via "Pull from
+// email". Old cached tabs can still mint and sync these, so every current
+// client scrubs them on load until those tabs die off.
+const LEGACY_SAMPLE_TITLES = new Set([
+  "Reply to legal about the MSA redlines",
+  "Send updated deck to the board",
+  "Confirm catering headcount for offsite",
+  "Review vendor security questionnaire",
+  "Approve the new on-call rotation",
+  "Schedule 1:1 with new hire",
+  "Pay the AWS invoice before it lapses",
+  "Give feedback on the Q3 roadmap draft",
+]);
+
 /** Ensure required fields exist on a loaded/imported board (forward-compatible). */
 export function normalizeState(s: AppState): AppState {
   return {
     boardCapacity: typeof s.boardCapacity === "number" ? s.boardCapacity : 32,
     projects: Array.isArray(s.projects) ? s.projects : [],
-    inbox: Array.isArray(s.inbox) ? s.inbox : [],
+    inbox: (Array.isArray(s.inbox) ? s.inbox : []).filter((c) => !LEGACY_SAMPLE_TITLES.has(c?.title)),
     game: withGame(s.game),
     day: s.day && typeof s.day === "object" ? s.day : undefined,
     dayCapacities: s.dayCapacities && typeof s.dayCapacities === "object" ? s.dayCapacities : {},
