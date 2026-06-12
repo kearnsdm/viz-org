@@ -30,11 +30,12 @@ haven't committed yet — an invitation to plan.
   available, a planned-vs-capacity bar, and the tasks scheduled to it. Drag a
   task from Today onto a day to plan it there (or between days); tasks due or
   snoozed to a day appear in its box automatically.
-- **Email Intake** — pull candidate action items "from email" on request, then
+- **Email Intake** — a holding pen for candidate tasks from your real inbox;
   file each one into a project or straight into Admin.
 - **Email capture** — a `#capture` URL (and a drag-to-bookmarks-bar bookmarklet
   for Outlook on the web / Gmail) that drops an email's subject + deep link into
-  Email Intake in one click.
+  Email Intake in one click. Batches can also arrive as an import code — e.g.
+  action items distilled from your mailbox in a Claude chat.
 
 Everything persists locally (browser `localStorage`), so your board is there
 when you come back.
@@ -64,8 +65,8 @@ npm run lint     # type-check only
 3. **Plan your day** — the **Daily Plan** card on the right surfaces what's
    pressing today across the whole board. Check items off there or jump to their
    project.
-4. **Pull from email** — in **Email Intake**, hit *Pull from email* to surface
-   candidate tasks, then file each into a project or Admin.
+4. **Import from email** — in **Email Intake**, paste an import code (raw JSON
+   or base64) of candidate tasks, then file each into a project or Admin.
 5. **Capture from your real inbox** — *Email Intake → ✉ Capture setup*, drag the
    bookmarklet to your bookmarks bar. With an email open (Outlook web or Gmail),
    click it: the subject and a link back to the message arrive as a candidate
@@ -96,8 +97,8 @@ src/
 
 ### Note on email intake
 
-The app ships with a **simulated** email source: *Pull from email* returns a few
-plausible action items drawn from a sample set. The data shape
-(`CandidateTask`) matches what a real email-extraction backend would return, so
-swapping `fetchEmailCandidates()` in `src/store.ts` for a real mailbox
-integration is the only change needed to make it live.
+The app is a static page with no backend, so it cannot search a mailbox itself.
+Real email flows in through two doors: the **capture bookmarklet / `#capture`
+URL** (one email at a time, from the browser), and **import codes** — a JSON
+array of `CandidateTask`s (optionally base64-encoded) produced by anything that
+*can* read the mailbox, such as a Claude chat with Outlook/Gmail connectors.

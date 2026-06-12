@@ -69,63 +69,6 @@ function makeTask(title: string, opts: Partial<Task> = {}): Task {
   };
 }
 
-function seedState(): AppState {
-  const projects: Project[] = [
-    {
-      id: uid("proj"),
-      name: "Q3 Product Launch",
-      color: PALETTE[0],
-      capacity: 8,
-      tasks: [
-        makeTask("Finalize launch messaging", { urgency: "high", due: today(1) }),
-        makeTask("Review beta feedback", { urgency: "normal", due: today(3) }),
-        makeTask("Sign off on pricing page", { urgency: "urgent", due: today(0) }),
-        makeTask("Brief the support team"),
-        makeTask("Schedule launch webinar", { urgency: "low" }),
-      ],
-    },
-    {
-      id: uid("proj"),
-      name: "Website Redesign",
-      color: PALETTE[1],
-      capacity: 5,
-      tasks: [
-        makeTask("Approve new homepage mockup", { urgency: "high", due: today(2) }),
-        makeTask("Audit current page load times"),
-        makeTask("Write migration plan"),
-      ],
-    },
-    {
-      id: uid("proj"),
-      name: "Hiring — Senior Engineer",
-      color: PALETTE[2],
-      capacity: 4,
-      tasks: [
-        makeTask("Review 3 candidate take-homes", { urgency: "urgent", due: today(0) }),
-        makeTask("Schedule final-round panel", { urgency: "high", due: today(1) }),
-      ],
-    },
-    {
-      id: uid("proj"),
-      name: "Admin",
-      color: "#64748b",
-      capacity: 3,
-      isAdmin: true,
-      tasks: [
-        makeTask("Submit Q2 expense report", { urgency: "high", due: today(1) }),
-        makeTask("Renew domain registration", { urgency: "normal", due: today(5) }),
-      ],
-    },
-  ];
-
-  return {
-    boardCapacity: 32,
-    projects,
-    inbox: [],
-    game: emptyGame(),
-  };
-}
-
 /** Ensure required fields exist on a loaded/imported board (forward-compatible). */
 export function normalizeState(s: AppState): AppState {
   return {
@@ -146,9 +89,9 @@ export function loadState(): AppState {
       if (parsed && Array.isArray(parsed.projects)) return normalizeState(parsed);
     }
   } catch {
-    // fall through to seed
+    // fall through to a blank board
   }
-  return seedState();
+  return emptyState();
 }
 
 export function saveState(state: AppState): void {
@@ -165,7 +108,7 @@ export function resetState(): AppState {
   } catch {
     /* ignore */
   }
-  return seedState();
+  return emptyState();
 }
 
 /** A blank board: no projects or tasks, just an empty Admin catch-all box. */
@@ -427,29 +370,10 @@ export function reducer(state: AppState, action: Action): AppState {
   }
 }
 
-// --- Email intake simulation --------------------------------------------
-// The real product pulls candidate tasks from the user's mailbox on request.
-// Here we simulate that: a request returns a few plausible action items the
-// user can file into a project or admin. The data shape matches what a real
-// email-extraction backend would return.
-
-const SAMPLE_EMAILS: Omit<CandidateTask, "id">[] = [
-  { title: "Reply to legal about the MSA redlines", from: "Dana (Legal) — \"MSA redlines\"", urgency: "high", due: today(1) },
-  { title: "Send updated deck to the board", from: "Priya — \"Board deck for Thursday\"", urgency: "urgent", due: today(0) },
-  { title: "Confirm catering headcount for offsite", from: "Events — \"Offsite logistics\"", urgency: "normal", due: today(4) },
-  { title: "Review vendor security questionnaire", from: "Procurement — \"Vendor onboarding\"", urgency: "normal" },
-  { title: "Approve the new on-call rotation", from: "Sam — \"On-call schedule\"", urgency: "high", due: today(2) },
-  { title: "Schedule 1:1 with new hire", from: "HR — \"Onboarding checklist\"", urgency: "low", due: today(6) },
-  { title: "Pay the AWS invoice before it lapses", from: "Billing — \"Invoice #4821 due\"", urgency: "urgent", due: today(1) },
-  { title: "Give feedback on the Q3 roadmap draft", from: "Product — \"Roadmap review\"", urgency: "normal", due: today(3) },
-];
-
-/** Simulate pulling 2–3 candidate action items from the user's email. */
-export function fetchEmailCandidates(): CandidateTask[] {
-  const count = 2 + Math.floor(Math.random() * 2);
-  const shuffled = [...SAMPLE_EMAILS].sort(() => Math.random() - 0.5).slice(0, count);
-  return shuffled.map((c) => ({ ...c, id: uid("cand") }));
-}
+// --- Email intake ---------------------------------------------------------
+// Candidate tasks arrive from the user's real mailbox via the #capture URL
+// (the bookmarklet) or via an import code pasted into Email Intake — e.g.
+// action items distilled from email in a Claude chat.
 
 /**
  * Decode an import code into candidate tasks. Accepts either a base64-encoded

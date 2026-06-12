@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { decodeCandidates, fetchEmailCandidates, formatDuration, useStore } from "../store";
+import { decodeCandidates, formatDuration, useStore } from "../store";
 
 /** The one-click capture bookmarklet, targeting this running copy of the app. */
 function bookmarkletCode(): string {
@@ -18,7 +18,6 @@ function bookmarkletCode(): string {
 
 export function EmailIntake() {
   const { state, dispatch } = useStore();
-  const [loading, setLoading] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showCapture, setShowCapture] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -32,15 +31,6 @@ export function EmailIntake() {
   }, [showCapture]);
 
   const adminId = state.projects.find((p) => p.isAdmin)?.id;
-
-  const pull = () => {
-    setLoading(true);
-    // Simulate a short round-trip to the mailbox.
-    setTimeout(() => {
-      dispatch({ type: "pullEmail", candidates: fetchEmailCandidates() });
-      setLoading(false);
-    }, 450);
-  };
 
   const runImport = () => {
     setImportError(null);
@@ -66,16 +56,14 @@ export function EmailIntake() {
           <button className="btn btn-sm btn-ghost" onClick={() => setShowCapture((v) => !v)}>
             ✉ Capture setup
           </button>
-          <button className="btn btn-sm btn-ghost" onClick={() => setShowImport((v) => !v)}>
+          <button className="btn btn-sm" onClick={() => setShowImport((v) => !v)}>
             Import
-          </button>
-          <button className="btn btn-sm" onClick={pull} disabled={loading}>
-            {loading ? "Scanning…" : "Pull from email"}
           </button>
         </div>
       </div>
       <p className="muted card__subtitle">
-        Candidate tasks distilled from your inbox. File each into a project or admin.
+        Candidate tasks from your real inbox — via the capture bookmarklet or a pasted import code. File each
+        into a project or admin.
       </p>
       {showCapture && (
         <div className="import-box">
@@ -131,7 +119,8 @@ export function EmailIntake() {
       )}
       {state.inbox.length === 0 ? (
         <p className="muted empty-hint">
-          Inbox clear. Hit <em>Pull from email</em> to scan for action items.
+          Inbox clear. Capture an open email with the bookmarklet (<em>✉ Capture setup</em>), or paste an
+          import code from a Claude email scan.
         </p>
       ) : (
         <ul className="candidate-list">
