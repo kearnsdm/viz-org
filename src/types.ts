@@ -81,6 +81,9 @@ export interface AppState {
   day?: DayPlan;
   /** Hours-as-minutes available per day (yyyy-mm-dd), for the week strip. */
   dayCapacities?: Record<string, number>;
+  /** Candidate ids already ingested once — guards the gist drop box (and any
+   * re-pasted import) against double-importing the same tasks. */
+  seenCandidateIds?: string[];
 }
 
 export interface DayPlan {

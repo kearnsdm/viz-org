@@ -98,7 +98,11 @@ src/
 ### Note on email intake
 
 The app is a static page with no backend, so it cannot search a mailbox itself.
-Real email flows in through two doors: the **capture bookmarklet / `#capture`
-URL** (one email at a time, from the browser), and **import codes** — a JSON
-array of `CandidateTask`s (optionally base64-encoded) produced by anything that
-*can* read the mailbox, such as a Claude chat with Outlook/Gmail connectors.
+Real email flows in through three doors: the **capture bookmarklet / `#capture`
+URL** (one email at a time, from the browser), **import codes** — a JSON array
+of `CandidateTask`s (optionally base64-encoded) pasted into Email Intake — and
+the **gist drop box**: when sync is connected, the app watches a second file
+(`viz-org-inbox.json`) in the same private gist on load/focus. Anything that can
+write to the gist (e.g. a Claude email scan with the same token) can leave
+candidates there and they flow into Email Intake automatically; ingested ids are
+remembered so nothing imports twice.

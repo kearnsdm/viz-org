@@ -5,13 +5,15 @@ import { ProjectPanel } from "./components/ProjectPanel";
 import { AddProjectDialog } from "./components/AddProjectDialog";
 import { SyncDialog } from "./components/SyncDialog";
 import { TodayView } from "./components/TodayView";
-import { STORAGE_KEY, StoreContext, loadState, reducer, saveState, uid, useStore } from "./store";
+import { STORAGE_KEY, StoreContext, decodeCandidates, loadState, reducer, saveState, uid, useStore } from "./store";
 import type { Urgency } from "./types";
 import { availableCredits, badgeById, level, withGame } from "./game";
 import {
   SyncContext,
+  clearInbox,
   findOrCreateGist,
   loadSyncConfig,
+  pullInbox,
   pullRemoteRetrying,
   pushRemoteRetrying,
   saveSyncConfig,
@@ -236,7 +238,10 @@ export function App() {
         if (cancelled) return;
         if (remote) dispatch({ type: "replaceState", state: remote });
         else await pushRemoteRetrying(config, latest.current);
-        if (!cancelled) setStatus({ phase: "ok", at: Date.now() });
+        if (!cancelled) {
+          setStatus({ phase: "ok", at: Date.now() });
+          void ingestInbox();
+        }
       } catch (e) {
         if (!cancelled) setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" });
       } finally {
@@ -246,6 +251,26 @@ export function App() {
     return () => {
       cancelled = true;
     };
+  }, [config]);
+
+  // Drain the gist drop box: candidate tasks left there by an outside helper
+  // (e.g. a Claude email scan) flow into Email Intake, then the box is
+  // emptied. The seenCandidateIds guard in the reducer makes this idempotent,
+  // so a failed clear just retries harmlessly on the next focus.
+  const ingestInbox = useCallback(async () => {
+    if (!config) return;
+    try {
+      const raw = await pullInbox(config);
+      if (!raw) return;
+      try {
+        const candidates = decodeCandidates(raw);
+        if (candidates.length) dispatch({ type: "pullEmail", candidates });
+      } finally {
+        await clearInbox(config);
+      }
+    } catch {
+      /* transient network/parse trouble — next focus tries again */
+    }
   }, [config]);
 
   const pushNow = useCallback(() => {
@@ -268,7 +293,10 @@ export function App() {
   useEffect(() => {
     if (!config) return;
     const handler = () => {
-      if (hydrated.current) pushNow();
+      if (hydrated.current) {
+        pushNow();
+        void ingestInbox();
+      }
     };
     window.addEventListener("online", handler);
     window.addEventListener("focus", handler);
@@ -276,7 +304,7 @@ export function App() {
       window.removeEventListener("online", handler);
       window.removeEventListener("focus", handler);
     };
-  }, [config, pushNow]);
+  }, [config, pushNow, ingestInbox]);
 
   const connect = useCallback((token: string) => {
     setStatus({ phase: "syncing" });

@@ -19,6 +19,7 @@ export interface SyncStatus {
 
 const SYNC_CFG_KEY = "viz-org-sync-v2";
 const GIST_FILE = "viz-org-board.json";
+const INBOX_FILE = "viz-org-inbox.json";
 const GIST_DESC = "viz-org board (synced) — do not delete";
 
 export function loadSyncConfig(): SyncConfig | null {
@@ -101,6 +102,30 @@ export async function pushRemote(cfg: SyncConfig, state: AppState): Promise<void
   await gh(`/gists/${cfg.gistId}`, cfg.token, {
     method: "PATCH",
     body: JSON.stringify({ files: { [GIST_FILE]: { content: serialize(state) } } }),
+  });
+}
+
+// --- Gist inbox -----------------------------------------------------------
+// A second file in the same private gist acts as a drop box: anything that
+// can write to the gist (e.g. a Claude email scan) leaves candidate tasks
+// there, and the app ingests them into Email Intake on load/focus.
+
+/** Raw contents of the gist inbox drop box, or null if empty/absent. */
+export async function pullInbox(cfg: SyncConfig): Promise<string | null> {
+  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
+  const file = gist.files?.[INBOX_FILE];
+  if (!file) return null;
+  let content: string = file.content ?? "";
+  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
+  const trimmed = content.trim();
+  return trimmed && trimmed !== "[]" ? trimmed : null;
+}
+
+/** Empty the drop box once its contents have been ingested. */
+export async function clearInbox(cfg: SyncConfig): Promise<void> {
+  await gh(`/gists/${cfg.gistId}`, cfg.token, {
+    method: "PATCH",
+    body: JSON.stringify({ files: { [INBOX_FILE]: { content: "[]" } } }),
   });
 }
 

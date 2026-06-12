@@ -78,6 +78,7 @@ export function normalizeState(s: AppState): AppState {
     game: withGame(s.game),
     day: s.day && typeof s.day === "object" ? s.day : undefined,
     dayCapacities: s.dayCapacities && typeof s.dayCapacities === "object" ? s.dayCapacities : {},
+    seenCandidateIds: Array.isArray(s.seenCandidateIds) ? s.seenCandidateIds : [],
   };
 }
 
@@ -336,8 +337,12 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "pullEmail": {
       const existing = new Set(state.inbox.map((c) => c.id));
-      const fresh = action.candidates.filter((c) => !existing.has(c.id));
-      return { ...state, inbox: [...state.inbox, ...fresh] };
+      const seen = new Set(state.seenCandidateIds ?? []);
+      const fresh = action.candidates.filter((c) => !existing.has(c.id) && !seen.has(c.id));
+      if (fresh.length === 0) return state;
+      // Remember ingested ids (capped) so the same batch never imports twice.
+      const seenCandidateIds = [...(state.seenCandidateIds ?? []), ...fresh.map((c) => c.id)].slice(-500);
+      return { ...state, inbox: [...state.inbox, ...fresh], seenCandidateIds };
     }
     case "fileCandidate": {
       const candidate = state.inbox.find((c) => c.id === action.candidateId);
