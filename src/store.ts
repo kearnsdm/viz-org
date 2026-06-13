@@ -158,6 +158,7 @@ export type Action =
   | { type: "startDay" }
   | { type: "resetDay" }
   | { type: "setDayCapacity"; minutes: number; date?: string }
+  | { type: "setDayCapacities"; caps: Record<string, number> }
   | { type: "scheduleTask"; projectId: string; taskId: string; date?: string }
   | { type: "reorderToday"; ids: string[] }
   | { type: "snoozeTask"; projectId: string; taskId: string; until: string }
@@ -275,6 +276,16 @@ export function reducer(state: AppState, action: Action): AppState {
         next = { ...next, day: { ...base, date, capacityMinutes: minutes > 0 ? minutes : undefined } };
       }
       return next;
+    }
+    case "setDayCapacities": {
+      // Bulk update from a calendar scan: incoming values win for the days
+      // they name; other days are untouched. <=0 clears a day back to unset.
+      const caps = { ...(state.dayCapacities ?? {}) };
+      for (const [date, minutes] of Object.entries(action.caps)) {
+        if (typeof minutes === "number" && minutes > 0) caps[date] = Math.round(minutes);
+        else delete caps[date];
+      }
+      return { ...state, dayCapacities: caps };
     }
     case "scheduleTask":
       return mapProject(state, action.projectId, (p) => ({

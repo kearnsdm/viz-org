@@ -265,7 +265,22 @@ export function App() {
     if (!raw) return 0;
     let fresh = 0;
     try {
-      const candidates = decodeCandidates(raw);
+      // The box carries either a bare candidate array (legacy) or an envelope
+      // { candidates?, dayCapacities? } — capacities come from calendar scans
+      // and overwrite the named days' hours.
+      let candidatesRaw = raw;
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          if (parsed.dayCapacities && typeof parsed.dayCapacities === "object") {
+            dispatch({ type: "setDayCapacities", caps: parsed.dayCapacities });
+          }
+          candidatesRaw = JSON.stringify(parsed.candidates ?? []);
+        }
+      } catch {
+        /* not plain JSON — decodeCandidates handles base64 below */
+      }
+      const candidates = decodeCandidates(candidatesRaw);
       const seen = new Set(latest.current.seenCandidateIds ?? []);
       const inInbox = new Set(latest.current.inbox.map((c) => c.id));
       fresh = candidates.filter((c) => !seen.has(c.id) && !inInbox.has(c.id)).length;
