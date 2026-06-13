@@ -352,11 +352,12 @@ body {
   min-width: 120px;
 }
 
-/* ---- Week strip (day boxes) ---- */
+/* ---- Week strip (day boxes, sized by available time) ---- */
 .week-strip {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
+  align-items: stretch;
 }
 .day-box {
   background: var(--panel);
@@ -367,7 +368,11 @@ body {
   flex-direction: column;
   gap: 8px;
   min-height: 132px;
-  transition: border-color 0.12s ease, background 0.12s ease;
+  min-width: 104px;
+  transition: border-color 0.12s ease, background 0.12s ease, flex-grow 0.3s ease;
+}
+.day-box.is-spent {
+  opacity: 0.6;
 }
 .day-box.is-today {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
@@ -397,95 +402,92 @@ body {
 .day-box__cap {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   font-size: 11px;
+  flex-wrap: wrap;
 }
 .day-box__cap input {
-  width: 54px;
-  padding: 4px 6px;
+  width: 44px;
+  padding: 4px 4px;
   font-size: 12px;
 }
-.day-box__bar {
-  height: 6px;
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  overflow: hidden;
-  flex: none;
+.day-box__free {
+  white-space: nowrap;
 }
-.day-box__bar-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #6366f1, #0ea5e9);
-  transition: width 0.3s ease;
-}
-.day-box__bar-fill.is-over {
-  background: linear-gradient(90deg, #ef4444, #f59e0b);
-}
-.day-box__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+
+/* The day's grid of time: a column representing the available minutes.
+ * Task blocks stack into it, sized by their estimates; what doesn't fit
+ * overflows (and scrolls) in red. Empty space is uncommitted time. */
+.day-grid {
+  flex: 1;
+  min-height: 150px;
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 3px;
   overflow-y: auto;
-  flex: 1;
-}
-.day-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--bg-soft);
-  border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 4px 7px;
-  font-size: 11px;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.02) 0,
+      rgba(255, 255, 255, 0.02) 8px,
+      transparent 8px,
+      transparent 16px
+    ),
+    var(--bg-soft);
+  border: 1px dashed var(--border);
+  padding: 3px;
+}
+.time-block {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-height: 17px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 26%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-left: 3px solid var(--accent);
   cursor: grab;
+  overflow: hidden;
 }
-.day-chip:hover {
-  border-color: var(--accent);
+.time-block:hover {
+  filter: brightness(1.15);
 }
-.day-chip--due {
-  opacity: 0.65;
+.time-block.is-over {
+  background: color-mix(in srgb, #ef4444 18%, var(--panel));
+  border-color: #ef4444;
+  border-left-color: #ef4444;
+}
+.time-block.is-ghost {
+  opacity: 0.6;
   border-style: dashed;
 }
-.day-chip__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: none;
-}
-.day-chip__title {
-  flex: 1;
-  min-width: 0;
+.time-block__title {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.day-chip__est {
-  flex: none;
-  font-size: 10px;
+.time-block__est {
+  font-size: 9px;
+  color: var(--muted);
+  line-height: 1;
 }
-.day-box__empty {
+.day-grid__empty {
+  margin: auto;
   font-size: 11px;
   font-style: italic;
   text-align: center;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
   padding: 6px;
 }
-.day-box__today {
-  font-size: 11px;
-  line-height: 1.5;
-}
-@media (max-width: 1100px) {
-  .week-strip {
-    grid-template-columns: repeat(4, 1fr);
-  }
-}
-@media (max-width: 700px) {
-  .week-strip {
-    grid-template-columns: repeat(2, 1fr);
+@media (max-width: 900px) {
+  .day-box {
+    min-width: 45%;
   }
 }
 
