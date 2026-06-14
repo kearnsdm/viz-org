@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>MEALS ON WHEEL — Electric Unicycle Delivery</title>
+<style>
+  html,body{
+    margin:0;height:100%;
+    background:#0a0a14;
+    color:#cfcfe6;
+    font-family:"Courier New",monospace;
+    overflow:hidden;
+    -webkit-user-select:none;user-select:none;
+  }
+  #wrap{
+    position:absolute;inset:0;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:10px;
+  }
+  #stage{position:relative;line-height:0;}
+  canvas{
+    image-rendering:pixelated;
+    image-rendering:crisp-edges;
+    background:#000;
+    border:3px solid #2a2a40;
+    border-radius:4px;
+    box-shadow:0 0 0 3px #07070d, 0 14px 50px rgba(0,0,0,.7);
+  }
+  /* subtle CRT scanlines */
+  #scan{
+    position:absolute;inset:0;pointer-events:none;border-radius:4px;
+    background:repeating-linear-gradient(to bottom,
+      rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,.12) 3px);
+    mix-blend-mode:multiply;
+  }
+  #help{
+    font-size:12px;color:#7a7a99;text-align:center;letter-spacing:1px;
+    max-width:560px;line-height:1.6;
+  }
+  #help b{color:#22c55e;}
+  .key{
+    display:inline-block;background:#1c1c2e;border:1px solid #34344f;border-bottom-width:2px;
+    border-radius:3px;padding:1px 6px;color:#cfcfe6;margin:0 1px;font-size:11px;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="game" width="256" height="240"></canvas>
+    <div id="scan"></div>
+  </div>
+  <div id="help">
+    <span class="key">&larr;</span><span class="key">&rarr;</span> steer &nbsp;
+    <span class="key">&uarr;</span><span class="key">&darr;</span> move up / down &nbsp;
+    <span class="key">Z</span> toss left &nbsp; <span class="key">X</span> toss right &nbsp;
+    <span class="key">Space</span> auto-aim toss<br>
+    <span class="key">Enter</span> / click to start &nbsp; <span class="key">P</span> pause &nbsp; <span class="key">M</span> mute &nbsp;
+    — <b>line up</b> with a glowing customer and sling the bag onto their porch.
+  </div>
+</div>
+<script>
+"use strict";
+/* ============================================================================
+   MEALS ON WHEEL  —  an 8-bit NES-style electric-unicycle delivery game
+   Single file. Vanilla canvas + WebAudio. 256x240 native NES resolution.
+   ========================================================================== */
+
+const W = 256, H = 240;
+const cv = document.getElementById('game');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+
+/* --- responsive integer scaling --------------------------------------------*/
+function fit(){
+  const sw = window.innerWidth, sh = window.innerHeight - 150;
+  const s = Math.max(1, Math.min(Math.floor(sw / W), Math.floor(sh / H)));
+  cv.style.width  = (W * s) + 'px';
+  cv.style.height = (H * s) + 'px';
+  const scan = document.getElementById('scan');
+  scan.style.width = cv.style.width; scan.style.height = cv.style.height;
+}
+window.addEventListener('resize', fit); fit();
+
+/* --- tiny draw helpers -----------------------------------------------------*/
+function rect(x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(x|0,y|0,w|0,h|0); }
+function px(x,y,c){ ctx.fillStyle=c; ctx.fillRect(x|0,y|0,1,1); }
+
+/* 5x7 bitmap font — wide & legible; M and W are clearly distinct ----------*/
+const FONT = {
+ 'A':["01110","10001","10001","11111","10001","10001","10001"],
+ 'B':["11110","10001","10001","11110","10001","10001","11110"],
+ 'C':["01110","10001","10000","10000","10000","10001","01110"],
+ 'D':["11100","10010","10001","10001","10001","10010","11100"],
+ 'E':["11111","10000","10000","11110","10000","10000","11111"],
+ 'F':["11111","10000","10000","11110","10000","10000","10000"],
+ 'G':["01110","10001","10000","10111","10001","10001","01111"],
+ 'H':["10001","10001","10001","11111","10001","10001","10001"],
+ 'I':["11111","00100","00100","00100","00100","00100","11111"],
+ 'J':["00111","00010","00010","00010","00010","10010","01100"],
+ 'K':["10001","10010","10100","11000","10100","10010","10001"],
+ 'L':["10000","10000","10000","10000","10000","10000","11111"],
+ 'M':["10001","11011","10101","10101","10001","10001","10001"],
+ 'N':["10001","11001","10101","10101","10011","10001","10001"],
+ 'O':["01110","10001","10001","10001","10001","10001","01110"],
+ 'P':["11110","10001","10001","11110","10000","10000","10000"],
+ 'Q':["01110","10001","10001","10001","10101","10010","01101"],
+ 'R':["11110","10001","10001","11110","10100","10010","10001"],
+ 'S':["01111","10000","10000","01110","00001","00001","11110"],
+ 'T':["11111","00100","00100","00100","00100","00100","00100"],
+ 'U':["10001","10001","10001","10001","10001","10001","01110"],
+ 'V':["10001","10001","10001","10001","10001","01010","00100"],
+ 'W':["10001","10001","10001","10101","10101","11011","10001"],
+ 'X':["10001","10001","01010","00100","01010","10001","10001"],
+ 'Y':["10001","10001","01010","00100","00100","00100","00100"],
+ 'Z':["11111","00001","00010","00100","01000","10000","11111"],
+ '0':["01110","10001","10011","10101","11001","10001","01110"],
+ '1':["00100","01100","00100","00100","00100","00100","01110"],
+ '2':["01110","10001","00001","00010","00100","01000","11111"],
+ '3':["11111","00010","00100","00010","00001","10001","01110"],
+ '4':["00010","00110","01010","10010","11111","00010","00010"],
+ '5':["11111","10000","11110","00001","00001","10001","01110"],
+ '6':["00110","01000","10000","11110","10001","10001","01110"],
+ '7':["11111","00001","00010","00100","01000","01000","01000"],
+ '8':["01110","10001","10001","01110","10001","10001","01110"],
+ '9':["01110","10001","10001","01111","00001","00010","01100"],
+ ' ':["00000","00000","00000","00000","00000","00000","00000"],
+ ':':["00000","00000","00100","00000","00100","00000","00000"],
+ '.':["00000","00000","00000","00000","00000","00100","00100"],
+ '-':["00000","00000","00000","11111","00000","00000","00000"],
+ '!':["00100","00100","00100","00100","00100","00000","00100"],
+ '/':["00001","00001","00010","00100","01000","10000","10000"],
+ '+':["00000","00100","00100","11111","00100","00100","00000"],
+ '$':["00100","01111","10100","01110","00101","11110","00100"],
+ '%':["11000","11001","00010","00100","01000","10011","00011"],
+ "'":["00100","00100","01000","00000","00000","00000","00000"],
+ ',':["00000","00000","00000","00000","00100","00100","01000"],
+ '?':["01110","10001","00001","00010","00100","00000","00100"],
+ '*':["00000","10101","01110","11111","01110","10101","00000"],
+ '>':["01000","00100","00010","00001","00010","00100","01000"],
+ '<':["00010","00100","01000","10000","01000","00100","00010"],
+};
+function text(str,x,y,col,s){
+  s = s||1; str = String(str).toUpperCase();
+  let cx = x;
+  for(const ch of str){
+    const g = FONT[ch] || FONT['?'];
+    ctx.fillStyle = col;
+    for(let r=0;r<7;r++){ const row=g[r];
+      for(let c=0;c<5;c++) if(row[c]==='1') ctx.fillRect((cx+c*s)|0,(y+r*s)|0,s,s);
+    }
+    cx += 6*s;
+  }
+  return cx;
+}
+function textW(str,s){ s=s||1; return String(str).length*6*s - s; }
+function textC(str,cx,y,col,s){ s=s||1; text(str, cx - textW(str,s)/2, y, col, s); }
+
+/* ====================== AUDIO (WebAudio chiptune) ==========================*/
+let AC=null, master=null, muted=false;
+function initAudio(){
+  if(AC) return;
+  try{
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    master = AC.createGain(); master.gain.value = 0.22; master.connect(AC.destination);
+  }catch(e){ AC=null; }
+}
+function tone(freq,dur,type,vol,sweep,when){
+  if(!AC||muted) return;
+  const t = (when||AC.currentTime);
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type=type||'square';
+  o.frequency.setValueAtTime(freq,t);
+  if(sweep) o.frequency.linearRampToValueAtTime(Math.max(30,freq+sweep), t+dur);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.linearRampToValueAtTime(vol||0.2, t+0.006);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+0.02);
+}
+function noise(dur,vol,cut){
+  if(!AC||muted) return;
+  const n=AC.createBufferSource();
+  const buf=AC.createBuffer(1, (AC.sampleRate*dur)|0, AC.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length);
+  n.buffer=buf;
+  const g=AC.createGain(); g.gain.value=vol||0.3;
+  const f=AC.createBiquadFilter(); f.type='lowpass'; f.frequency.value=cut||1400;
+  n.connect(f); f.connect(g); g.connect(master); n.start();
+}
+const sfx = {
+  toss(){ tone(520,0.09,'square',0.16,300); },
+  deliver(){ if(!AC)return; const t=AC.currentTime;
+    tone(660,0.07,'square',0.18,0,t); tone(880,0.07,'square',0.18,0,t+0.07); tone(1320,0.12,'square',0.18,0,t+0.14); },
+  coin(){ if(!AC)return; const t=AC.currentTime; tone(988,0.05,'square',0.16,0,t); tone(1318,0.10,'square',0.16,0,t+0.05); },
+  pickup(){ tone(740,0.06,'square',0.15,260); },
+  crash(){ noise(0.4,0.5,1000); tone(150,0.32,'square',0.22,-110); },
+  miss(){ tone(200,0.18,'square',0.13,-70); },
+  empty(){ tone(120,0.06,'square',0.10,-40); },
+  level(){ if(!AC)return; const t=AC.currentTime; [523,659,784,1046].forEach((f,i)=>tone(f,0.13,'square',0.18,0,t+i*0.1)); },
+  start(){ if(!AC)return; const t=AC.currentTime; [392,523,659].forEach((f,i)=>tone(f,0.1,'square',0.18,0,t+i*0.08)); },
+  honk(){ if(!AC)return; const t=AC.currentTime; tone(175,0.2,'square',0.16,0,t); tone(146,0.22,'square',0.16,0,t+0.05); },
+  bossdown(){ if(!AC)return; const t=AC.currentTime; [330,262,196,131].forEach((f,i)=>tone(f,0.16,'square',0.2,0,t+i*0.12)); noise(0.5,0.4,800); },
+};
+/* simple looping bgm -------------------------------------------------------*/
+const BASS = [55,0,55,0, 49,0,49,0, 65.4,0,65.4,0, 49,0,73.4,0].map(f=>f*2);
+const LEAD = [330,392,330,494, 392,330,294,247, 262,330,392,330, 294,247,294,392];
+let musicStep=0, nextNote=0;
+function music(){
+  if(!AC||muted) return;
+  while(nextNote < AC.currentTime + 0.12){
+    const i = musicStep % 16;
+    const b = BASS[i]; if(b) tone(b,0.16,'triangle',0.30,0,nextNote);
+    if(state==='play'){ const l=LEAD[i]; if(l && (i%2===0||Math.random()<0.5)) tone(l,0.11,'square',0.07,0,nextNote); }
+    nextNote += 0.135; musicStep++;
+  }
+}
+
+/* ====================== INPUT =============================================*/
+const keys={}, prev={};
+const CODES=['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','KeyA','KeyD','KeyW','KeyS',
+             'KeyZ','KeyX','Space','Enter','KeyP','KeyM','KeyR'];
+addEventListener('keydown',e=>{
+  if(CODES.includes(e.code)) e.preventDefault();
+  if(!keys[e.code]){ initAudio(); if(AC&&AC.state==='suspended') AC.resume(); }
+  keys[e.code]=true;
+});
+addEventListener('keyup',e=>{ keys[e.code]=false; });
+// a click / tap also starts & confirms menus — and gives the page focus + unlocks audio
+addEventListener('pointerdown',()=>{ initAudio(); if(AC&&AC.state==='suspended') AC.resume(); keys['Enter']=true; });
+addEventListener('pointerup',  ()=>{ keys['Enter']=false; });
+function held(c){ return !!keys[c]; }
+function hit(c){ return keys[c] && !prev[c]; }
+function left(){  return held('ArrowLeft')||held('KeyA'); }
+function right(){ return held('ArrowRight')||held('KeyD'); }
+function up(){    return held('ArrowUp')||held('KeyW'); }
+function down(){  return held('ArrowDown')||held('KeyS'); }
+
+/* ====================== WORLD GEOMETRY ====================================*/
+const HUD_H = 28;
+const ROAD_L = 60, ROAD_R = 196;          // road x-band
+const ROAD_CX = (ROAD_L+ROAD_R)/2;
+const PORCH_L = ROAD_L, PORCH_R = ROAD_R;  // delivery lines
+const PLY_MINY = HUD_H+78, PLY_MAXY = H-26;
+const TOL = 18;                            // vertical delivery tolerance
+
+/* ====================== GAME STATE ========================================*/
+let state='title';        // title | play | wipe | clear | over
+let frame=0;
+let score=0, hi=+(localStorage.getItem('mow_hi')||0);
+let lives, level, cash, bags, battery, combo;
+let scrollY, dist, streetLen, speed;
+let nextHouseL, nextHouseR, nextHaz, nextPickup;
+let totalCust, doneCust;
+let player=null, houses=[], hazards=[], pickups=[], projectiles=[], parts=[], pops=[];
+let shake=0, wipeT=0, flashMsg=null, flashT=0, paused=false, clearT=0;
+let perfect=false;
+let rushHour=false, boss=null;            // boss "rush hour" street
+let lastRush=false, lastBossWin=false;    // remembered for the clear screen
+
+function mult(){ return Math.min(6, 1 + Math.floor(combo/4)); }
+
+function resetGame(){
+  score=0; lives=3; level=1; cash=0; bags=8; battery=100; combo=0;
+  startStreet();
+}
+function startStreet(){
+  houses=[]; hazards=[]; pickups=[]; projectiles=[]; parts=[]; pops=[];
+  scrollY=0; dist=0;
+  rushHour = (level % 3 === 0);                          // every 3rd street is a boss
+  streetLen = rushHour ? (1600 + level*120) : (2400 + level*220);
+  speed = 1.15 + level*0.16;
+  nextHouseL=40; nextHouseR=95; nextHaz=rushHour?70:120; nextPickup=200;
+  totalCust=0; doneCust=0; perfect=false; combo=Math.max(0,combo);
+  bags = Math.max(bags, rushHour?8:5);
+  battery = Math.max(battery, rushHour?70:45);
+  player = { x:ROAD_CX, y:PLY_MAXY-12, lean:0, inv:0, slip:0, tossCd:0 };
+  if(rushHour){
+    const hp = 6 + level;
+    boss = { x:ROAD_CX, y:HUD_H+30, w:46, h:30, dir:1, hp, maxHp:hp,
+             atkCd:150, lungeT:0, retreat:HUD_H+30, hurt:0, dead:0, honk:0 };
+    flash('RUSH HOUR!', 110);
+  } else boss = null;
+}
+
+/* ====================== SPAWNING ==========================================*/
+const HOUSE_W=46, HOUSE_H=44;
+const ROOFS=['#7a2d2d','#2d4a7a','#3a6a3a','#6a4a2d','#5a3a6a'];
+const WALLS=['#caa27a','#9aa2c8','#b0c8a0','#c8b89a','#b29ac8'];
+
+function spawnHouse(side){
+  const wall = WALLS[(Math.random()*WALLS.length)|0];
+  const roof = ROOFS[(Math.random()*ROOFS.length)|0];
+  const pending = Math.random() < Math.min(0.72, 0.46 + level*0.03);
+  const x = side==='L' ? 4 : (256-4-HOUSE_W);
+  const h = {
+    side, x, y:-HOUSE_H, w:HOUSE_W, h:HOUSE_H, wall, roof,
+    porchY: -HOUSE_H + 26,
+    pending, delivered:false, missed:false,
+    food:(Math.random()*FOODS.length)|0,
+    lit:[Math.random()<0.6, Math.random()<0.6, Math.random()<0.6, Math.random()<0.6],
+    happy:0,
+  };
+  if(pending){ totalCust++; }
+  houses.push(h);
+}
+function spawnHazard(){
+  const cols=['#d23b3b','#3b6bd2','#e0a020','#9a40c0','#20b0a0'];
+  const laneX = ()=> ROAD_L+10 + Math.random()*(ROAD_R-ROAD_L-30);
+  const carBias = rushHour ? 0.66 : 0.34;        // rush hour = heavy traffic
+  if(Math.random() < carBias){ // car (crawling gridlock during rush hour)
+    const vy = rushHour ? speed*0.55 + 0.25 : speed + 0.6 + level*0.16;
+    hazards.push({t:'car', x:ROAD_L+8 + Math.floor(Math.random()*3)*((ROAD_R-ROAD_L-18)/2.4),
+      y:-30, w:18, h:30, vy, col:cols[(Math.random()*cols.length)|0]});
+    return;
+  }
+  const r=Math.random();
+  if(r<0.32){ // pedestrian crossing
+    const dir = Math.random()<0.5?1:-1;
+    hazards.push({t:'ped', x: dir>0?ROAD_L-6:ROAD_R+6, y:-10, w:6, h:11, vy:speed, vx:dir*0.5,
+      col:['#e8d8c0','#d0a0e0','#a0d0e8'][(Math.random()*3)|0]});
+  } else if(r<0.58){ // dog
+    hazards.push({t:'dog', x:laneX(), y:-10, w:9, h:6, vy:speed+0.4, vx:0, col:'#a07040'});
+  } else if(r<0.80){ // pothole
+    hazards.push({t:'hole', x:laneX(), y:-10, w:14, h:8, vy:speed});
+  } else { // cone
+    hazards.push({t:'cone', x:laneX(), y:-10, w:7, h:9, vy:speed});
+  }
+}
+function spawnPickup(){
+  let t='bag';
+  if(battery<35 && Math.random()<0.6) t='charge';
+  else if(bags<4) t='bag';
+  else { const r=Math.random(); t = r<0.4?'cash' : r<0.75?'bag':'charge'; }
+  pickups.push({t, x:ROAD_L+8 + Math.random()*(ROAD_R-ROAD_L-16), y:-10, w:11, h:11, vy:speed, bob:Math.random()*6});
+}
+
+/* ====================== POPUPS / PARTICLES ================================*/
+function pop(x,y,str,col){ pops.push({x,y,str,col,life:48,vy:-0.5}); }
+function burst(x,y,col,n,spd){
+  for(let i=0;i<n;i++){
+    const a=Math.random()*6.28, s=Math.random()*(spd||1.6)+0.4;
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-0.6,life:20+Math.random()*16,col,g:0.12});
+  }
+}
+
+/* ====================== ACTIONS ===========================================*/
+function tossBag(side){
+  if(player.tossCd>0) return;
+  if(bags<=0){ sfx.empty(); flash('NO BAGS!'); return; }
+  bags--; player.tossCd=8;
+  projectiles.push({ x:player.x, y:player.y+2, side,
+    vx: side==='L'? -3.0 : 3.0, spin:0 });
+  sfx.toss();
+}
+function tossSmart(){
+  // pick the aligned pending customer (either side) nearest in y; else closer side
+  let best=null, bestd=1e9, bs=null;
+  for(const h of houses){
+    if(!h.pending||h.delivered||h.missed) continue;
+    const d=Math.abs((h.y+26)-player.y);
+    if(d<TOL+10 && d<bestd){ bestd=d; best=h; bs=h.side; }
+  }
+  tossBag(bs || (player.x<ROAD_CX?'L':'R'));
+}
+function resolveBag(side,by){
+  // find nearest pending customer on this side aligned with throw y
+  let best=null, bestd=1e9;
+  for(const h of houses){
+    if(h.side!==side||!h.pending||h.delivered||h.missed) continue;
+    const d=Math.abs((h.y+26)-by);
+    if(d<TOL && d<bestd){ bestd=d; best=h; }
+  }
+  const ex = side==='L'?PORCH_L:PORCH_R;
+  if(best){
+    best.delivered=true; best.happy=40; doneCust++;
+    combo++;
+    const pts=100*mult(); score+=pts;
+    const tip=2+(Math.random()*6|0); cash+=tip;
+    battery=Math.min(100,battery+7);
+    pop(ex + (side==='L'?-6:-18), best.y+10, '+'+pts, '#ffe23a');
+    pop(ex + (side==='L'?-6:-18), best.y+2, '$'+tip+' TIP', '#22c55e');
+    burst(ex, best.y+22, '#22c55e', 10, 1.8);
+    burst(ex, best.y+18, '#ffe23a', 6, 1.4);
+    sfx.deliver();
+    // feeding a stuck commuter chips away at the rush-hour boss
+    if(rushHour && boss && boss.hp>0 && boss.dead<=0){
+      boss.hp--; boss.hurt=12; shake=Math.max(shake,5);
+      pop(boss.x, boss.y-20, 'GRIDLOCK -1', '#ff7a40');
+      if(boss.hp<=0) bossDefeated();
+    }
+  } else {
+    // splat
+    burst(ex, by, '#c08040', 7, 1.4);
+    burst(ex, by, '#e0c040', 4, 1.2);
+    sfx.miss();
+  }
+}
+function wipeout(){
+  if(player.inv>0) return;
+  lives--; combo=0; battery=Math.max(0,battery-10);
+  shake=14; wipeT=34; state='wipe';
+  burst(player.x,player.y,'#d23b3b',16,2.4);
+  burst(player.x,player.y,'#ffffff',8,2.0);
+  sfx.crash();
+}
+function flash(msg,t){ flashMsg=msg; flashT=t||70; }
+
+/* ====================== BOSS: THE GRIDLOCK (rush hour) ====================*/
+function updateBoss(pb){
+  const b=boss; if(!b) return;
+  if(b.hurt>0) b.hurt--;
+  if(b.honk>0) b.honk--;
+  if(b.dead>0){ b.dead--; b.y+=1.4; b.x+=b.dir*0.6; return; }   // spinning out
+  if(b.lungeT>0){
+    b.lungeT--;
+    if(b.lungeT>18) b.y += 4.0;                  // charge down at the player
+    else b.y += (b.retreat - b.y)*0.16;          // then retreat
+  } else {
+    // weave across the road, blocking lanes
+    b.x += b.dir*(0.7 + level*0.05);
+    if(b.x < ROAD_L+b.w/2+2){ b.x=ROAD_L+b.w/2+2; b.dir=1; }
+    if(b.x > ROAD_R-b.w/2-2){ b.x=ROAD_R-b.w/2-2; b.dir=-1; }
+    if(--b.atkCd <= 0){
+      const pick=Math.random();
+      if(pick<0.40){ // honk + spit a volley of fast cars
+        b.honk=20; sfx.honk();
+        const n=3 + (level>4?1:0);
+        for(let i=0;i<n;i++) hazards.push({t:'car',
+          x:ROAD_L+10+Math.random()*(ROAD_R-ROAD_L-20), y:b.y+16+i*7,
+          w:18, h:30, vy: speed+1.5+level*0.16, col:'#e0c020'});
+      } else if(pick<0.72){ // drop oil slicks
+        b.honk=12;
+        for(let i=0;i<3;i++) hazards.push({t:'hole',
+          x:ROAD_L+12+Math.random()*(ROAD_R-ROAD_L-24), y:b.y+14, w:14, h:8, vy:speed});
+      } else { // lunge charge
+        b.honk=26; sfx.honk(); b.lungeT=46;
+      }
+      b.atkCd = Math.max(80, 170 - level*8);
+    }
+  }
+  b.y = Math.max(HUD_H+30, Math.min(PLY_MAXY-26, b.y));
+  const hb={x:b.x-b.w/2, y:b.y-b.h/2, w:b.w, h:b.h};
+  if(player.inv<=0 && aabb(pb,hb)){ wipeout(); b.lungeT=0; }
+}
+function bossDefeated(){
+  boss.hp=0; boss.dead=70;
+  burst(boss.x,boss.y,'#ffcc20',26,3.2);
+  burst(boss.x,boss.y,'#e05020',18,2.6);
+  burst(boss.x,boss.y,'#ffffff',12,2.2);
+  shake=16; cash+=50;
+  flash('RUSH HOUR CLEARED!', 130);
+  sfx.bossdown();
+}
+
+/* ====================== UPDATE ============================================*/
+function update(){
+  frame++;
+  if(shake>0) shake-=0.7; if(shake<0)shake=0;
+  if(flashT>0) flashT--;
+
+  // update particles & popups in all states (for juice on menus too)
+  for(const p of parts){ p.vy+=p.g; p.x+=p.vx; p.y+=p.vy; p.life--; }
+  parts=parts.filter(p=>p.life>0);
+  for(const o of pops){ o.y+=o.vy; o.life--; }
+  pops=pops.filter(o=>o.life>0);
+
+  if(state==='title'){ if(hit('Enter')||hit('Space')){ sfx.start(); resetGame(); state='play'; } return; }
+  if(state==='over'){ if(hit('Enter')||hit('Space')){ state='title'; } return; }
+  if(state==='clear'){
+    clearT++;
+    if(clearT>40 && (hit('Enter')||hit('Space'))){ level++; startStreet(); state='play'; sfx.start(); }
+    return;
+  }
+  if(state==='wipe'){
+    wipeT--;
+    if(wipeT<=0){
+      if(lives<0){ state='over'; if(score>hi){hi=score; localStorage.setItem('mow_hi',hi);} }
+      else { player.x=ROAD_CX; player.y=PLY_MAXY-12; player.inv=100; player.slip=0; state='play'; }
+    }
+    return;
+  }
+
+  // ===== PLAY =====
+  if(hit('KeyP')) paused=!paused;
+  if(hit('KeyM')){ muted=!muted; if(master) master.gain.value = muted?0:0.22; }
+  if(paused) return;
+
+  if(player.inv>0) player.inv--;
+  if(player.tossCd>0) player.tossCd--;
+
+  // low-battery slowdown
+  const lowBat = battery<=0;
+  const curSpeed = speed * (lowBat?0.55:1);
+
+  // scroll world
+  scrollY += curSpeed; dist += curSpeed;
+
+  // battery drain
+  battery -= (1.7 + level*0.22)/60 * (curSpeed/speed + 0.3);
+  if(battery<0) battery=0;
+
+  // spawn by distance
+  if(dist>=nextHouseL){ spawnHouse('L'); nextHouseL = dist + 64 + Math.random()*24; }
+  if(dist>=nextHouseR){ spawnHouse('R'); nextHouseR = dist + 64 + Math.random()*24; }
+  if(dist>=nextHaz && dist < streetLen-120){
+    spawnHazard();
+    const gap = rushHour ? Math.max(15, 30 - level*2) : Math.max(26, 58 - level*3);
+    nextHaz = dist + gap + Math.random()*(rushHour?16:30);
+  }
+  if(dist>=nextPickup){ spawnPickup(); nextPickup = dist + 100 + Math.random()*70; }
+
+  // ----- player control -----
+  let mvx=0, mvy=0;
+  const ctl = player.slip>0 ? 0.4 : 1;          // slipping reduces control
+  if(left())  mvx-=1.7*ctl;
+  if(right()) mvx+=1.7*ctl;
+  if(up())    mvy-=1.5*ctl;
+  if(down())  mvy+=1.5*ctl;
+  if(player.slip>0){ player.x += player.slipDir*1.3; player.slip--; }
+  player.x += mvx; player.y += mvy;
+  player.lean = mvx<-0.1?-2 : mvx>0.1?2 : (player.lean*0.6|0);
+  player.x = Math.max(ROAD_L+7, Math.min(ROAD_R-7, player.x));
+  player.y = Math.max(PLY_MINY, Math.min(PLY_MAXY, player.y));
+
+  // toss
+  if(hit('KeyZ')) tossBag('L');
+  if(hit('KeyX')) tossBag('R');
+  if(hit('Space')) tossSmart();
+
+  // ----- houses -----
+  for(const h of houses){
+    h.y += curSpeed; h.porchY = h.y+26;
+    if(h.happy>0) h.happy--;
+    if(h.pending && !h.delivered && !h.missed && h.y > H){
+      h.missed=true; combo=0; sfx.miss();
+      pop((h.side==='L'?ROAD_L+4:ROAD_R-30), H-40, 'MISSED', '#e0503a');
+    }
+  }
+  houses = houses.filter(h=> h.y < H+10);
+
+  // ----- projectiles -----
+  for(const b of projectiles){
+    b.x += b.vx; b.y += curSpeed*0.25; b.spin+=0.6;
+    if(Math.random()<0.4) parts.push({x:b.x,y:b.y,vx:0,vy:0,life:6,col:'#caa27a',g:0});
+    if(b.side==='L' && b.x<=PORCH_L){ resolveBag('L', b.y); b.dead=true; }
+    if(b.side==='R' && b.x>=PORCH_R){ resolveBag('R', b.y); b.dead=true; }
+    if(b.x< -6 || b.x>262) b.dead=true;
+  }
+  projectiles=projectiles.filter(b=>!b.dead);
+
+  // ----- hazards -----
+  const pb = {x:player.x-6, y:player.y-8, w:12, h:18};
+  for(const z of hazards){
+    z.y += (z.vy!=null?z.vy:curSpeed);
+    if(z.vx) z.x += z.vx;
+    if(z.t==='dog'){ // dog drifts toward player x
+      z.x += Math.sign(player.x - z.x)*0.35;
+    }
+    // collision
+    const hb = {x:z.x - z.w/2, y:z.y - z.h/2, w:z.w, h:z.h};
+    if(aabb(pb, hb)){
+      if(z.t==='hole'){ if(player.inv<=0){ player.slip=22; player.slipDir=(Math.random()<0.5?-1:1); shake=6; sfx.miss(); z.hit=true; } }
+      else if(player.inv<=0){ wipeout(); z.hit=true; }
+    }
+  }
+  hazards = hazards.filter(z=> z.y < H+24 && !z.hit);
+
+  // ----- boss -----
+  if(rushHour) updateBoss(pb);
+
+  // ----- pickups -----
+  for(const p of pickups){
+    p.y += curSpeed; p.bob+=0.2;
+    const hb={x:p.x-p.w/2,y:p.y-p.h/2,w:p.w,h:p.h};
+    if(aabb(pb,hb)){
+      p.got=true;
+      if(p.t==='bag'){ bags+=4; pop(p.x,p.y,'+4 BAGS','#caa27a'); sfx.pickup(); }
+      else if(p.t==='charge'){ battery=Math.min(100,battery+35); pop(p.x,p.y,'+CHARGE','#3ad0ff'); sfx.pickup(); }
+      else { const t=3+(Math.random()*7|0); cash+=t; score+=50; pop(p.x,p.y,'$'+t,'#ffe23a'); sfx.coin(); }
+      burst(p.x,p.y,'#ffffff',6,1.4);
+    }
+  }
+  pickups = pickups.filter(p=> p.y<H+10 && !p.got);
+
+  // ----- street complete -----
+  let streetDone;
+  if(rushHour){
+    // beat the boss (and let it finish spinning out), or survive to the end
+    streetDone = (boss && boss.hp<=0 && boss.dead<=0) || dist>=streetLen;
+  } else {
+    streetDone = dist>=streetLen && houses.every(h=>!h.pending||h.delivered||h.missed);
+  }
+  if(streetDone && state==='play'){   // a same-frame wipeout (state='wipe') must win over the clear
+    perfect = totalCust>0 && doneCust>=totalCust;
+    const bossWin = rushHour && boss && boss.hp<=0;
+    let clearBonus = bags*10 + cash*4 + (perfect?500*level:0);
+    if(rushHour) clearBonus += bossWin ? 1000*level : 200*level;
+    score += clearBonus; lastClearBonus=clearBonus;
+    lastRush=rushHour; lastBossWin=bossWin;
+    if(score>hi){ hi=score; localStorage.setItem('mow_hi',hi); }
+    state='clear'; clearT=0; sfx.level();
+  }
+}
+let lastClearBonus=0;
+
+function aabb(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+
+/* ====================== SPRITES (code-drawn pixel art) ===================*/
+const FOODS=['burger','pizza','sushi','coffee','noodle'];
+
+function drawRider(x,y,lean,flash){
+  if(flash && ((frame>>2)&1)) return;
+  const cx=x, top=y-16;            // x,y is wheel-contact center-ish
+  const wy=y;
+  // shadow
+  rect(cx-7, wy+6, 14, 2, 'rgba(0,0,0,.35)');
+  // wheel (edge-on) with spinning band
+  rect(cx-3, wy-2, 6, 9, '#15151c');
+  rect(cx-3, wy-2 + (((frame>>1)&1)?2:5), 6, 2, '#54546a');
+  rect(cx-1, wy-2, 2, 9, '#0c0c12');
+  // foot pegs + shoes
+  rect(cx-7, wy+1, 4, 2, '#3a3a48');
+  rect(cx+3, wy+1, 4, 2, '#3a3a48');
+  const bx=cx+lean;
+  const SKIN='#553521', SKIN_HI='#6f462b', HAIR='#f0cf52', HAIR_HI='#ffe98a';
+  rect(bx-4, top+10, 3, 6, '#23232e'); rect(bx+1, top+10, 3, 6, '#23232e'); // legs
+  // shoulders / arms (green sleeves) + dark-skinned hands on the grips
+  rect(bx-6, top+5, 2, 5, '#15803d'); rect(bx+4, top+5, 2, 5, '#15803d');
+  rect(bx-6, top+9, 2, 2, SKIN);      rect(bx+4, top+9, 2, 2, SKIN);
+  rect(bx-5, top+5, 10, 6, '#16a34a');
+  rect(bx-5, top+5, 10, 1, '#2bd46a');
+  // the big delivery backpack (the star of the show)
+  rect(bx-4, top+2, 8, 9, '#101012');
+  rect(bx-4, top+2, 8, 1, '#2a2a2e');
+  rect(bx-1, top+5, 3, 3, '#22c55e');           // logo
+  px(bx,    top+6, '#0c0c10');
+  // neck (dark skin)
+  rect(bx-1, top+3, 3, 2, SKIN);
+  // head — blond hair seen from behind, dark skin at the nape/ears
+  rect(bx-2, top-3, 5, 5, HAIR);                // hair mass
+  rect(bx-2, top-3, 5, 1, HAIR_HI);             // crown highlight
+  rect(bx-2, top+1, 1, 1, SKIN_HI); rect(bx+2, top+1, 1, 1, SKIN_HI); // ears
+}
+
+function drawHouse(h){
+  const {x,y,w}=h;
+  if(y < -HOUSE_H) return;
+  // glow for pending
+  if(h.pending && !h.delivered && !h.missed){
+    const g=0.25+0.12*Math.sin(frame*0.18);
+    ctx.fillStyle='rgba(255,226,58,'+g.toFixed(3)+')';
+    ctx.fillRect(x-3, y-3, w+6, HOUSE_H+6);
+  }
+  // body
+  const wall = h.missed? '#5a5a64' : h.wall;
+  rect(x, y+10, w, HOUSE_H-10, wall);
+  rect(x, y+10, w, 2, 'rgba(255,255,255,.15)');
+  // roof (triangle-ish)
+  const roof = h.missed? '#3a3a40' : h.roof;
+  for(let i=0;i<10;i++) rect(x+i+2, y+10-i, w-2*(i+2)+4<0?0:w-2*(i+2)+4 , 1, roof);
+  rect(x+w/2-1, y, 2, 4, '#5a4a3a'); // chimney
+  // door (faces the porch / road side)
+  const dx = h.side==='L'? x+w-9 : x+3;
+  rect(dx, y+HOUSE_H-14, 7, 14, h.missed?'#2a2a30':'#5a3a24');
+  rect(dx+ (h.side==='L'?1:5), y+HOUSE_H-8, 1,2,'#e0c040');
+  // windows
+  const wins=[[x+4,y+16],[x+w-12,y+16]];
+  wins.forEach((p,i)=>{ rect(p[0],p[1],8,8,'#2a2a3a');
+    rect(p[0]+1,p[1]+1,6,6, (h.lit[i]&&!h.missed)?'#ffe27a':'#3a4a6a'); });
+
+  // pending markers: bubble + bobbing arrow at porch
+  if(h.pending && !h.delivered && !h.missed){
+    const ex = h.side==='L'? PORCH_L : PORCH_R;
+    const ay = h.y+18 + Math.sin(frame*0.2)*2;
+    // arrow pointing to porch
+    const dir = h.side==='L'? 1 : -1;
+    rect(ex - dir*8, ay, 6, 2, '#ffe23a');
+    rect(ex - dir*4, ay-2, 2, 6, '#ffe23a');
+    // order bubble above house
+    drawBubble(x+w/2-7, y-12, h.food);
+  }
+  if(h.delivered){
+    // happy heart
+    const hy = h.y+8 - (h.happy>0? (40-h.happy)*0.2:0);
+    drawHeart(h.x+h.w/2-2, hy);
+    rect(h.x+h.w/2-3, h.y+24, 6, 1, '#22c55e');
+  }
+}
+function drawBubble(x,y,food){
+  rect(x,y,14,11,'#f4f4ff'); rect(x,y,14,1,'#ffffff'); rect(x,y+11,14,1,'#b0b0c8');
+  rect(x+5,y+11,2,2,'#f4f4ff'); rect(x+5,y+13,2,1,'#c8c8d8'); // tail
+  drawFood(x+4,y+3,food);
+}
+function drawFood(x,y,k){
+  const t=FOODS[k];
+  if(t==='burger'){ rect(x,y,6,2,'#e0a040'); rect(x,y+2,6,1,'#3a8a3a'); rect(x,y+3,6,2,'#7a3a20'); rect(x,y+5,6,1,'#e0a040'); }
+  else if(t==='pizza'){ rect(x+2,y,2,1,'#e0c040'); rect(x+1,y+1,4,1,'#e08040'); rect(x,y+2,6,1,'#e0a040'); rect(x+1,y+3,4,2,'#d05030'); }
+  else if(t==='sushi'){ rect(x,y+1,6,4,'#f0f0f0'); rect(x,y+1,6,1,'#e04040'); rect(x+2,y+2,2,2,'#e87030'); }
+  else if(t==='coffee'){ rect(x+1,y,4,1,'#ffffff'); rect(x+1,y+1,4,4,'#7a4a2a'); rect(x+5,y+2,1,2,'#ffffff'); }
+  else { rect(x,y+1,6,4,'#e0c060'); rect(x+1,y,1,1,'#c04040'); rect(x+4,y+4,1,1,'#3a8a3a'); }
+}
+function drawHeart(x,y){
+  rect(x,y,2,1,'#e0405a'); rect(x+3,y,2,1,'#e0405a');
+  rect(x-1,y+1,7,2,'#ff5a78'); rect(x,y+3,5,1,'#e0405a'); rect(x+1,y+4,3,1,'#e0405a'); rect(x+2,y+5,1,1,'#e0405a');
+}
+function drawCar(z){
+  const x=z.x-z.w/2, y=z.y-z.h/2, w=z.w, h=z.h;
+  rect(x-1,y+4,1,4,'#111'); rect(x+w,y+4,1,4,'#111');
+  rect(x-1,y+h-8,1,4,'#111'); rect(x+w,y+h-8,1,4,'#111');
+  rect(x,y,w,h,z.col);
+  rect(x+1,y,w-2,1,'rgba(255,255,255,.2)');
+  rect(x+2,y+3,w-4,5,'#bfe3ff');           // windshield (front=top)
+  rect(x+2,y+h-9,w-4,5,'#9ac0e8');         // rear window
+  rect(x+1,y+h*0.5-1,w-2,2,'#000000');
+  rect(x+1,y+1,3,2,'#fff7c0'); rect(x+w-4,y+1,3,2,'#fff7c0'); // headlights
+  rect(x+1,y+h-3,3,2,'#e03030'); rect(x+w-4,y+h-3,3,2,'#e03030'); // taillights
+}
+function drawHazard(z){
+  if(z.t==='car'){ drawCar(z); return; }
+  const x=z.x, y=z.y;
+  if(z.t==='ped'){
+    rect(x-1,y-5,3,3,'#e8c8a0'); rect(x-2,y-2,5,4,z.col); rect(x-1,y+2,2,3,'#333'); rect(x+1,y+2,1,3,'#333');
+  } else if(z.t==='dog'){
+    rect(x-4,y-2,8,3,z.col); rect(x-5,y-3,3,3,z.col); rect(x-4,y+1,1,2,'#3a2a18'); rect(x+3,y+1,1,2,'#3a2a18'); rect(x+4,y-2,1,2,z.col);
+  } else if(z.t==='hole'){
+    ctx.fillStyle='#0b0b10'; ctx.fillRect(x-7,y-3,14,7); rect(x-5,y-2,3,1,'#222');
+  } else if(z.t==='cone'){
+    rect(x-1,y-5,2,5,'#f06010'); rect(x-2,y-2,4,1,'#fff'); rect(x-3,y+1,6,2,'#d04000');
+  }
+}
+function drawPickup(p){
+  const x=p.x, y=p.y + Math.sin(p.bob)*1.5;
+  // glow
+  ctx.fillStyle='rgba(255,255,255,.12)'; ctx.fillRect(x-6,y-6,12,12);
+  if(p.t==='bag'){
+    rect(x-4,y-3,8,8,'#b88a52'); rect(x-4,y-3,8,1,'#caa472');
+    rect(x-2,y-5,4,2,'#9a6a32');                 // handle
+    rect(x-2,y-1,4,3,'#22c55e');                 // logo
+  } else if(p.t==='charge'){
+    rect(x-4,y-4,8,9,'#1a2a3a'); rect(x-4,y-4,8,1,'#3ad0ff');
+    rect(x+1,y-4,3,2,'#3ad0ff');                 // glow tab
+    rect(x,y-3,1,3,'#ffe23a'); rect(x-1,y,2,1,'#ffe23a'); rect(x-1,y+1,1,2,'#ffe23a'); // bolt
+  } else { // cash
+    rect(x-5,y-3,10,7,'#2e7d4f'); rect(x-5,y-3,10,1,'#3fae6f');
+    text('$', x-3, y-3, '#ffe23a', 1);
+  }
+}
+function drawBag(b){
+  const x=b.x, y=b.y - Math.abs(Math.sin(b.spin))*2;
+  rect(x-3,y-2,6,6,'#b88a52'); rect(x-3,y-2,6,1,'#caa472');
+  rect(x-1,y-4,2,2,'#9a6a32');
+  rect(x-1,y,2,2,'#22c55e');
+}
+
+/* ====================== BACKGROUND =======================================*/
+function drawWorld(){
+  // grass / curb backdrop
+  rect(0,0,W,H,'#1d3326');
+  rect(0,0,W,H,'#1d3326');
+  // sidewalks
+  rect(0,0,ROAD_L,H,'#6b6b7d'); rect(ROAD_R,0,W-ROAD_R,H,'#6b6b7d');
+  // curb edges
+  rect(ROAD_L-2,0,2,H,'#3a3a48'); rect(ROAD_R,0,2,H,'#3a3a48');
+  // sidewalk seams (scrolling)
+  const so = scrollY%24;
+  ctx.fillStyle='#5a5a6a';
+  for(let y=-24+so; y<H; y+=24){ ctx.fillRect(0,y,ROAD_L,1); ctx.fillRect(ROAD_R,y,W-ROAD_R,1); }
+  // road
+  rect(ROAD_L,0,ROAD_R-ROAD_L,H,'#3a3a44');
+  // lane dashes (two lanes)
+  ctx.fillStyle='#d8d860';
+  const lo=scrollY%26;
+  const lane1=ROAD_L+(ROAD_R-ROAD_L)/3, lane2=ROAD_L+2*(ROAD_R-ROAD_L)/3;
+  for(let y=-26+lo; y<H; y+=26){ ctx.fillRect(lane1-1,y,2,13); ctx.fillRect(lane2-1,y,2,13); }
+  // rush-hour dusk tint
+  if(rushHour){ ctx.fillStyle='rgba(232,116,28,0.10)'; ctx.fillRect(0,0,W,H); }
+}
+function drawBoss(b){
+  const x=b.x-b.w/2, y=b.y-b.h/2, w=b.w, h=b.h;
+  const hurt = b.hurt>0 && (frame&1);
+  const body = hurt ? '#ffffff' : (b.dead>0 ? '#7a4020' : '#c83020');
+  rect(x+2, y+h-1, w-4, 3, 'rgba(0,0,0,.4)');                 // shadow
+  // big wheels poking out the sides
+  rect(x-2, y+5, 3, 8, '#111'); rect(x+w-1, y+5, 3, 8, '#111');
+  rect(x-2, y+h-13, 3, 8, '#111'); rect(x+w-1, y+h-13, 3, 8, '#111');
+  // smokestacks
+  rect(x+5, y-3, 3, 3, '#222'); rect(x+w-8, y-3, 3, 3, '#222');
+  if(b.honk>0){ rect(x+4,y-6,4,3,'rgba(150,150,150,.6)'); rect(x+w-9,y-6,4,3,'rgba(150,150,150,.6)'); }
+  // cab body
+  rect(x, y, w, h, body);
+  rect(x, y, w, 2, hurt?'#fff':'#e85030');
+  // grille / windshield (front faces the player, at the bottom)
+  rect(x+4, y+h-13, w-8, 6, '#22141a');
+  // angry glowing headlight eyes
+  const eye = (b.honk>0 && (frame>>1&1)) ? '#ffffff' : '#ffe060';
+  rect(x+6, y+h-11, 6, 3, eye); rect(x+w-12, y+h-11, 6, 3, eye);
+  rect(x+7, y+h-10, 2, 1, '#c04000'); rect(x+w-11, y+h-10, 2, 1, '#c04000');
+  // hazard-stripe bumper
+  for(let i=0;i<w-2;i+=6){ rect(x+1+i, y+h-4, 3, 4, '#f0c020'); rect(x+4+i, y+h-4, 3, 4, '#1a1a1a'); }
+}
+function drawBossBar(){
+  if(!rushHour || !boss) return;
+  rect(0,29,W,11,'rgba(10,6,16,.62)');
+  text('GRIDLOCK', 4, 31, boss.hurt>0?'#ffffff':'#ff5a30', 1);
+  const bx=58, bw=190;
+  rect(bx,31,bw,5,'#201018'); rect(bx,31,bw,1,'#000');
+  const f=Math.max(0, boss.hp/boss.maxHp);
+  rect(bx+1,32, Math.round((bw-2)*f), 3, boss.dead>0?'#ffcc20':'#e0403a');
+}
+
+/* ====================== HUD ==============================================*/
+function pad(n,l){ n=''+(n|0); while(n.length<l)n='0'+n; return n; }
+function drawHUD(){
+  rect(0,0,W,HUD_H,'#0c0c18'); rect(0,HUD_H,W,1,'#34344f');
+  // score
+  text('SCORE '+pad(score,7), 3, 2, '#ffffff', 1);
+  // lives (wheels)
+  for(let i=0;i<Math.max(0,lives);i++){ const x=254-i*8;
+    rect(x-5,3,5,5,'#15151c'); rect(x-4,4,3,3,'#54546a'); }
+  text('HI '+pad(hi,6), 158, 2, '#8a8aff', 1);
+
+  // row2
+  text('ST'+pad(level,2), 3, 10, '#ffe23a', 1);
+  // bags
+  rect(40,10,5,5,'#b88a52'); rect(41,9,3,1,'#9a6a32');
+  text('x'+bags, 47, 10, bags>0?'#caa472':'#e0503a', 1);
+  text('$'+cash, 84, 10, '#3fae6f', 1);
+  if(mult()>1) text('x'+mult()+' COMBO', 120, 10, '#ff8a3a', 1);
+
+  // battery bar (row3)
+  text('BAT', 3, 18, '#9aa', 1);
+  rect(24,18,76,5,'#101018'); rect(24,18,76,1,'#000');
+  const bw=Math.round(74*battery/100);
+  let bc = battery>50?'#22c55e' : battery>20?'#e0c040' : '#e0503a';
+  if(battery<=20 && (frame>>2&1)) bc='#7a2020';
+  rect(25,19,bw,3,bc);
+  // street progress
+  text('ST', 150, 18, '#9aa', 1);
+  rect(166,18,84,5,'#101018');
+  const pw=Math.round(82*Math.min(1,dist/streetLen));
+  rect(167,19,pw,3,'#3ad0ff');
+}
+
+/* ====================== RENDER ===========================================*/
+function render(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,W,H);
+
+  // screen shake
+  let sx=0,sy=0;
+  if(shake>0){ sx=(Math.random()*2-1)*shake; sy=(Math.random()*2-1)*shake; }
+  ctx.save(); ctx.translate(sx|0, sy|0);
+
+  if(state==='title'){ drawTitle(); ctx.restore(); return; }
+
+  drawWorld();
+
+  // depth order: houses, pickups, hazards, bags, player
+  for(const h of houses) drawHouse(h);
+  for(const p of pickups) drawPickup(p);
+  for(const z of hazards) drawHazard(z);
+  if(rushHour && boss) drawBoss(boss);
+  for(const b of projectiles) drawBag(b);
+
+  // player (hide briefly on wipeout)
+  if(state!=='wipe' || (wipeT>20)) drawRider(player.x, player.y, player.lean, player.inv>0);
+  else { // crashed sprite: scattered
+    rect(player.x-4,player.y,8,3,'#15151c'); rect(player.x-2,player.y-4,5,3,'#16a34a');
+  }
+
+  // particles & popups
+  for(const p of parts){ ctx.globalAlpha=Math.min(1,p.life/12); rect(p.x,p.y,1,1,p.col); }
+  ctx.globalAlpha=1;
+  for(const o of pops){ ctx.globalAlpha=Math.min(1,o.life/16); textC(o.str,o.x,o.y,o.col,1); }
+  ctx.globalAlpha=1;
+
+  drawHUD();
+  drawBossBar();
+
+  // low battery warning (kept clear of the boss HP bar during rush hour, with a
+  // dark backing so it stays legible over the road/boss)
+  if(battery<=0 && (frame>>3&1)){
+    const wy = (rushHour && boss) ? 44 : 34;
+    rect(72, wy-1, 112, 9, 'rgba(8,6,12,.78)');
+    textC('LOW BATTERY!', 128, wy, '#e0503a', 1);
+  }
+
+  // flash message
+  if(flashT>0){ ctx.globalAlpha=Math.min(1,flashT/20); textC(flashMsg,128,60,'#ffffff',2); ctx.globalAlpha=1; }
+
+  if(paused && state==='play'){ overlay(); textC('PAUSED',128,108,'#ffffff',3); textC('PRESS P',128,140,'#9aa',1); }
+
+  if(state==='clear') drawClear();
+  if(state==='over')  drawOver();
+
+  ctx.restore();
+}
+
+function overlay(){ ctx.fillStyle='rgba(6,6,14,.7)'; ctx.fillRect(0,HUD_H,W,H-HUD_H); }
+
+function drawTitle(){
+  // night street backdrop
+  rect(0,0,W,H,'#10101f');
+  for(let i=0;i<40;i++){ const x=(i*53)%W, y=(i*97)%120; rect(x,y,1,1, i%5? '#2a2a44':'#ffe27a'); }
+  rect(0,150,W,H-150,'#3a3a44');
+  rect(60,150,2,H,'#5a5a6a'); rect(194,150,2,H,'#5a5a6a');
+  ctx.fillStyle='#d8d860'; const lo=(frame*1.4)%26;
+  for(let y=150-26+lo;y<H;y+=26){ ctx.fillRect(127,y,2,13); }
+
+  // marquee glow title
+  const yb=44 + Math.sin(frame*0.06)*2;
+  textC('MEALS', 128, yb, '#0c0c18', 4);          // shadow
+  textC('MEALS', 127, yb-1, '#ffe23a', 4);
+  textC('ON WHEEL', 128, yb+34, '#0c0c18', 3);
+  textC('ON WHEEL', 127, yb+33, '#22c55e', 3);
+  textC('ELECTRIC UNICYCLE DELIVERY', 128, yb+58, '#8a8aff', 1);
+
+  // demo rider cruising
+  const rx=128+Math.sin(frame*0.05)*40;
+  drawRider(rx, 176, Math.sin(frame*0.05)>0?2:-2, false);
+
+  if((frame>>4)&1) textC('CLICK OR PRESS ENTER', 128, 200, '#ffffff', 1);
+  textC('Z TOSS LEFT   X TOSS RIGHT', 128, 214, '#9aa', 1);
+  textC('HI '+pad(hi,6), 128, 226, '#ffe23a', 1);
+}
+
+function drawClear(){
+  overlay();
+  if(lastRush){
+    textC(lastBossWin?'RUSH HOUR CLEARED!':'ESCAPED THE JAM', 128, 48, lastBossWin?'#ffcc20':'#ffe23a', 2);
+    if(lastBossWin) textC('* GRIDLOCK DEFEATED *', 128, 72, '#ff5a30', 1);
+    textC('FED  '+doneCust+' COMMUTERS', 128, 90, '#ffffff', 1);
+    textC('TIPS BANKED  $'+cash, 128, 106, '#3fae6f', 1);
+    textC('CLEAR BONUS  +'+lastClearBonus, 128, 122, '#3ad0ff', 1);
+    textC('SCORE  '+pad(score,7), 128, 144, '#ffffff', 1);
+    if(clearT>40 && (frame>>4&1)) textC('PRESS ENTER', 128, 174, '#ffffff', 1);
+    return;
+  }
+  textC('STREET '+level+' CLEAR!', 128, 56, '#ffe23a', 2);
+  textC('DELIVERED  '+doneCust+'/'+totalCust, 128, 86, '#ffffff', 1);
+  if(perfect) textC('* PERFECT STREET! +'+(500*level)+' *', 128, 100, '#22c55e', 1);
+  textC('TIPS BANKED  $'+cash, 128, 116, '#3fae6f', 1);
+  textC('CLEAR BONUS  +'+lastClearBonus, 128, 130, '#3ad0ff', 1);
+  textC('SCORE  '+pad(score,7), 128, 150, '#ffffff', 1);
+  if(clearT>40 && (frame>>4&1)) textC('PRESS ENTER', 128, 178, '#ffffff', 1);
+}
+
+function drawOver(){
+  ctx.fillStyle='rgba(6,6,14,.82)'; ctx.fillRect(0,0,W,H);
+  textC('GAME OVER', 128, 64, '#e0503a', 3);
+  textC('YOU RAN OUT OF WHEELS', 128, 100, '#9aa', 1);
+  textC('SCORE  '+pad(score,7), 128, 122, '#ffffff', 1);
+  textC('STREET REACHED  '+level, 128, 136, '#ffe23a', 1);
+  if(score>=hi) textC('* NEW HIGH SCORE! *', 128, 152, '#22c55e', 1);
+  else textC('HIGH  '+pad(hi,7), 128, 152, '#8a8aff', 1);
+  if((frame>>4)&1) textC('PRESS ENTER', 128, 186, '#ffffff', 1);
+}
+
+/* ====================== MAIN LOOP ========================================*/
+let lastT=performance.now(), acc=0;
+const STEP=1000/60;
+function loop(now){
+  acc += now-lastT; lastT=now;
+  if(acc>200) acc=200;
+  let n=0;
+  while(acc>=STEP && n<5){ update(); for(const k of CODES) prev[k]=keys[k]; acc-=STEP; n++; }
+  music();
+  render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
