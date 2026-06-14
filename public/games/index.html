@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meals On Wheel — Games</title>
+<style>
+  :root{ --bg:#0a0a14; --panel:#14142a; --line:#2a2a44; --ink:#cfcfe6; --dim:#7a7a99; --green:#22c55e; --yellow:#ffe23a; }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:var(--bg);color:var(--ink);
+    font-family:"Courier New",monospace;letter-spacing:.5px;}
+  .wrap{max-width:680px;margin:0 auto;padding:48px 20px 64px;}
+  h1{font-size:34px;line-height:1.1;margin:0 0 4px;color:var(--yellow);text-shadow:3px 3px 0 #000;}
+  h1 .sub{display:block;font-size:18px;color:var(--green);margin-top:6px;}
+  .tag{color:var(--dim);font-size:13px;margin:10px 0 30px;}
+  a.card{display:block;text-decoration:none;color:var(--ink);background:var(--panel);
+    border:2px solid var(--line);border-radius:8px;padding:18px 20px;margin:14px 0;
+    transition:transform .08s ease, border-color .08s ease;}
+  a.card:hover{transform:translateY(-2px);border-color:var(--green);}
+  a.card .name{font-size:20px;color:var(--yellow);}
+  a.card .name .play{float:right;color:var(--green);font-size:14px;}
+  a.card .desc{color:var(--dim);font-size:13px;margin-top:8px;line-height:1.5;}
+  .badge{display:inline-block;font-size:11px;color:#0a0a14;background:var(--green);
+    border-radius:3px;padding:1px 6px;margin-left:6px;vertical-align:middle;}
+  footer{color:#55556e;font-size:12px;margin-top:34px;}
+  footer a{color:var(--dim);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>MEALS ON WHEEL<span class="sub">electric-unicycle food delivery</span></h1>
+  <div class="tag">8-bit NES-style games. Keyboard recommended — click the game once, then play.</div>
+
+  <a class="card" href="meals-on-wheel-2.html">
+    <div class="name">Brooklyn Run <span class="badge">NEW</span><span class="play">PLAY ▶</span></div>
+    <div class="desc">Navigate a route across Brooklyn by reading a mini-map and turning at each corner.
+      Forward legs play the top-down delivery game; left/right legs are jump-over side-scrollers.
+      Brick brownstones, time-of-day shifts that pay more (and pack the streets), and a graded difficulty ramp.</div>
+  </a>
+
+  <a class="card" href="meals-on-wheel.html">
+    <div class="name">Meals On Wheel <span class="play">PLAY ▶</span></div>
+    <div class="desc">The original: a Paperboy-style top-down delivery run. Sling food to glowing customers,
+      dodge cars and dogs, build combos and tips, and survive the rush-hour boss every third street.</div>
+  </a>
+
+  <footer>Controls: <b>Z / X</b> toss · <b>↑ / Space</b> jump · arrows steer · <b>Enter</b> start · <b>P</b> pause · <b>M</b> mute
+    &nbsp;·&nbsp; <a href="../">viz-org</a></footer>
+</div>
+</body>
+</html>
