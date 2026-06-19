@@ -32,6 +32,14 @@ export function setTaskDrag(e: React.DragEvent, taskId: string, projectId: strin
 const DEFAULT_DAY_MINUTES = 8 * 60;
 /** Unestimated tasks block out a half hour on the grid. */
 const FALLBACK_ESTIMATE = 30;
+/** Tallest a day column gets, in px — the busiest day's time fills this. */
+const GRID_PX = 230;
+/** Floor for the shared scale so a light week doesn't balloon each task. */
+const SCALE_FLOOR_MIN = 4 * 60;
+/** Smallest block height so even a 5-minute task stays clickable. */
+const MIN_BLOCK_PX = 20;
+
+type BlockItem = PlanItem & { reason?: DayBoxReason };
 
 function shiftDay(days: number): { iso: string; label: string; sub: string } {
   const d = new Date();
@@ -48,16 +56,14 @@ function minutesLeftToday(now: Date): number {
   return Math.max(0, Math.round((midnight.getTime() - now.getTime()) / 60000));
 }
 
-type BlockItem = PlanItem & { reason?: DayBoxReason };
-
 /**
- * The rolling 7-day strip as a map of time: each day's box is sized in
- * proportion to the time actually available that day (set hours, or an
- * assumed 8h workday — and for today, never more than what's left of the day,
- * so a mostly-spent day looks mostly spent). Tasks render as blocks sized by
- * their estimates, stacked into the day's grid; blocks that don't fit the
- * available time show as overflowing. Drag any task onto a day to plan it
- * there; drag back to Today to reclaim it.
+ * The rolling 7-day strip as a shared map of time. Every day uses the SAME
+ * vertical scale (pixels per minute), so a 30-minute task is the same height
+ * on Monday as on Saturday and days are directly comparable. Each day shows a
+ * shaded "available time" zone (set hours, or an assumed 8h workday — and for
+ * today, never more than the hours actually left); tasks stack as blocks sized
+ * by their estimate, and anything past the capacity line visibly doesn't fit.
+ * Drag a task onto a day to plan it there, or use × to remove it.
  */
 export function WeekStrip() {
   const { state, dispatch } = useStore();
@@ -71,8 +77,30 @@ export function WeekStrip() {
     return () => clearInterval(id);
   }, []);
 
-  const days = Array.from({ length: 7 }, (_, i) => shiftDay(i));
   const todayPlan = buildDailyPlan(state);
+
+  // First pass: gather each day's available minutes and its task blocks.
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const { iso, label, sub } = shiftDay(i);
+    const isToday = i === 0;
+    const items: BlockItem[] = isToday ? todayPlan : tasksForDay(state, iso);
+    const cap = dayCapacityMinutes(state, iso);
+    const baseAvail = cap ?? DEFAULT_DAY_MINUTES;
+    const avail = isToday ? Math.max(0, Math.min(baseAvail, minutesLeftToday(now))) : baseAvail;
+
+    let used = 0;
+    const blocks = items.map((it) => {
+      const est = it.task.estimateMinutes ?? FALLBACK_ESTIMATE;
+      const fits = used + est <= avail;
+      used += est;
+      return { it, est, fits };
+    });
+    return { iso, label, sub, isToday, cap, avail, blocks, planned: used };
+  });
+
+  // Shared scale: the day needing the most vertical room fills GRID_PX.
+  const scaleMax = Math.max(SCALE_FLOOR_MIN, ...days.map((d) => Math.max(d.avail, d.planned)));
+  const pxPerMin = GRID_PX / scaleMax;
 
   const onDrop = (e: React.DragEvent, date: string) => {
     e.preventDefault();
@@ -83,27 +111,12 @@ export function WeekStrip() {
 
   return (
     <div className="week-strip">
-      {days.map(({ iso, label, sub }, i) => {
-        const isToday = i === 0;
-        const items: BlockItem[] = isToday ? todayPlan : tasksForDay(state, iso);
-        const cap = dayCapacityMinutes(state, iso);
-        const base = cap ?? DEFAULT_DAY_MINUTES;
-        const avail = isToday ? Math.max(0, Math.min(base, minutesLeftToday(now))) : base;
-        const setCap = (minutes: number) =>
-          dispatch({ type: "setDayCapacity", date: iso, minutes: Math.max(0, minutes) });
-
-        // Stack blocks into the grid; once the cumulative estimate exceeds
-        // what's available, the rest visibly don't fit.
-        let used = 0;
-        const blocks = items.map((it) => {
-          const est = it.task.estimateMinutes ?? FALLBACK_ESTIMATE;
-          const fits = used + est <= avail;
-          used += est;
-          return { it, est, fits };
-        });
-        const planned = used;
+      {days.map(({ iso, label, sub, isToday, cap, avail, blocks, planned }) => {
         const over = planned > avail;
         const free = Math.max(0, avail - planned);
+        const setCap = (minutes: number) =>
+          dispatch({ type: "setDayCapacity", date: iso, minutes: Math.max(0, minutes) });
+        const availPx = Math.round(avail * pxPerMin);
 
         return (
           <div
@@ -111,7 +124,6 @@ export function WeekStrip() {
             className={`day-box ${isToday ? "is-today" : ""} ${dropDate === iso ? "is-drop" : ""} ${
               avail === 0 ? "is-spent" : ""
             }`}
-            style={{ flexGrow: Math.max(avail, 45), flexBasis: 0 }}
             onDragOver={(e) => {
               e.preventDefault();
               if (dropDate !== iso) setDropDate(iso);
@@ -139,49 +151,65 @@ export function WeekStrip() {
               <button className="cap-step" title="Half hour more" onClick={() => setCap((cap ?? DEFAULT_DAY_MINUTES) + 30)}>
                 +
               </button>
-              <span className={`day-box__free muted ${over ? "overdue" : ""}`}>
-                {avail === 0
-                  ? "day spent"
-                  : over
-                    ? `${formatDuration(planned - avail)} over`
-                    : `${cap ? "" : "~"}${formatDuration(free) || "0m"} free`}
-              </span>
             </div>
-            <div
-              className="day-grid"
-              title={
-                isToday
-                  ? `${formatDuration(avail) || "0m"} left today · ${formatDuration(planned) || "0m"} planned`
-                  : `${formatDuration(avail)} available · ${formatDuration(planned) || "0m"} planned`
-              }
-            >
-              {blocks.map(({ it, est, fits }) => (
-                <div
-                  key={it.task.id}
-                  className={`time-block ${fits ? "" : "is-over"} ${it.reason === "due" ? "is-ghost" : ""}`}
-                  style={{
-                    height: `${Math.max(9, Math.round((est / Math.max(avail, 60)) * 100))}%`,
-                    ["--accent" as string]: it.project.color,
-                  }}
-                  draggable
-                  onDragStart={(e) => setTaskDrag(e, it.task.id, it.project.id)}
-                  onClick={() => setEdit(it)}
-                  title={`${it.task.title} — ${it.task.estimateMinutes ? "" : "no estimate, assuming "}${formatDuration(est)}${
-                    fits ? "" : " · DOESN'T FIT"
-                  }${it.reason === "due" ? " · due this day (not yet planned)" : ""} — drag to move, click to edit`}
-                >
-                  <span className="time-block__title">
-                    {it.reason === "snoozed" ? "💤 " : ""}
-                    {it.task.title}
-                  </span>
-                  <span className="time-block__est">
-                    {it.task.estimateMinutes ? formatDuration(est) : `~${formatDuration(est)}`}
-                  </span>
-                </div>
-              ))}
-              {items.length === 0 && (
-                <div className="day-grid__empty muted">{avail === 0 ? "out of time" : "open time — drop tasks here"}</div>
-              )}
+            <div className={`day-box__free muted ${over ? "overdue" : ""}`}>
+              {avail === 0
+                ? "day spent"
+                : over
+                  ? `${formatDuration(planned - avail)} over`
+                  : `${cap ? "" : "~"}${formatDuration(free) || "0m"} free of ${formatDuration(avail)}`}
+            </div>
+
+            <div className="day-grid" style={{ height: GRID_PX }}>
+              {/* Shaded available-time zone, with the capacity line at its base. */}
+              {avail > 0 && <div className="day-grid__avail" style={{ height: Math.max(2, availPx) }} aria-hidden />}
+              <div className="day-grid__stack">
+                {blocks.map(({ it, est, fits }) => {
+                  const px = Math.max(MIN_BLOCK_PX, Math.round(est * pxPerMin));
+                  return (
+                    <div
+                      key={it.task.id}
+                      className={`time-block ${fits ? "" : "is-over"} ${it.reason === "due" ? "is-ghost" : ""}`}
+                      style={{ height: px, ["--accent" as string]: it.project.color }}
+                      draggable
+                      onDragStart={(e) => setTaskDrag(e, it.task.id, it.project.id)}
+                      onClick={() => setEdit(it)}
+                      title={`${it.task.title} — ${it.task.estimateMinutes ? "" : "no estimate, assuming "}${formatDuration(
+                        est,
+                      )}${fits ? "" : " · doesn't fit the day"}${
+                        it.reason === "due" ? " · due this day (not yet planned)" : ""
+                      } — click to edit, drag to move`}
+                    >
+                      <span className="time-block__main">
+                        <span className="time-block__title">
+                          {it.reason === "snoozed" ? "💤 " : ""}
+                          {it.task.title}
+                        </span>
+                        {px >= 30 && (
+                          <span className="time-block__est">
+                            {it.task.estimateMinutes ? formatDuration(est) : `~${formatDuration(est)}`}
+                          </span>
+                        )}
+                      </span>
+                      <button
+                        className="time-block__del"
+                        title="Remove this task"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (confirm(`Delete "${it.task.title}"?`)) {
+                            dispatch({ type: "deleteTask", projectId: it.project.id, taskId: it.task.id });
+                          }
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  );
+                })}
+                {blocks.length === 0 && (
+                  <div className="day-grid__empty muted">{avail === 0 ? "out of time" : "open — drop tasks here"}</div>
+                )}
+              </div>
             </div>
           </div>
         );
