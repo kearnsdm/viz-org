@@ -30,44 +30,37 @@ function useMeasure<T extends HTMLElement>() {
 const FREE_ID = "__free__";
 
 /** A project box on the time board: sized by work-minutes, filled with one
- * subtle band per open task (band height ∝ that task's time). */
+ * subtle stripe per open task (stripe height ∝ that task's time). Only the
+ * project name shows as text — task titles and the project's time/counts live
+ * in the hover tooltips, so nothing overflows even a small box. */
 function ProjectBox({ project, onOpen }: { project: Project; onOpen: () => void }) {
   const mins = projectWorkMinutes(project);
   const open = project.tasks.filter((t) => !t.done);
   const urgent = open.filter((t) => t.urgency === "urgent" || t.urgency === "high").length;
+  const summary = `${project.name} — ${formatDuration(mins) || "0m"} of work · ${open.length} open${
+    urgent ? ` · ${urgent} pressing` : ""
+  } · click to open`;
 
   return (
-    <button
-      className="tboard-box"
-      style={{ ["--accent" as string]: project.color }}
-      onClick={onOpen}
-      title={`${project.name} — ${formatDuration(mins) || "0m"} of work · click to open`}
-    >
-      {/* Per-task bands: a quiet stripe per task, sized by its time. */}
-      <span className="tboard-box__bands" aria-hidden>
+    <button className="tboard-box" style={{ ["--accent" as string]: project.color }} onClick={onOpen} title={summary}>
+      {/* One quiet stripe per task, sized by its time; hover a stripe for its title. */}
+      <span className="tboard-box__bands">
         {open.map((t, i) => (
           <span
             key={t.id}
             className="tboard-band"
             style={{
               flexGrow: taskMinutes(t),
-              background: `color-mix(in srgb, var(--accent) ${i % 2 ? 30 : 20}%, transparent)`,
+              background: `color-mix(in srgb, var(--accent) ${i % 2 ? 32 : 20}%, transparent)`,
             }}
             title={`${t.title} · ${formatDuration(taskMinutes(t))}${t.estimateMinutes ? "" : " (est.)"}`}
-          >
-            <span className="tboard-band__label">{t.title}</span>
-          </span>
+          />
         ))}
       </span>
       <span className="tboard-box__body">
         <span className="tboard-box__name">
           {project.isAdmin && <span className="pill pill-admin">admin</span>}
-          {project.name}
-        </span>
-        <span className="tboard-box__meta">
-          <span className="pill pill-time">⏱ {formatDuration(mins) || "0m"}</span>
-          <span className="muted">{open.length} open</span>
-          {urgent > 0 && <span className="pill pill-urgent">{urgent} pressing</span>}
+          <span className="tboard-box__nametext">{project.name}</span>
         </span>
       </span>
     </button>

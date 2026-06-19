@@ -1262,49 +1262,40 @@ input[type="checkbox"] {
   inset: 0;
   display: flex;
   flex-direction: column;
-  pointer-events: none;
 }
 .tboard-band {
   flex: 1 1 0;
   min-height: 0;
   border-bottom: 1px solid rgba(0, 0, 0, 0.18);
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-}
-.tboard-band__label {
-  font-size: 10px;
-  color: var(--text);
-  opacity: 0.55;
-  padding: 0 10px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .tboard-box__body {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
+  padding: 6px 8px;
   height: 100%;
   pointer-events: none;
 }
 .tboard-box__name {
-  font-weight: 600;
-  font-size: 14px;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  line-height: 1.25;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  align-items: flex-start;
+  gap: 4px;
 }
-.tboard-box__meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
+.tboard-box__nametext {
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55), 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.tboard-box .pill-admin {
+  font-size: 8px;
+  padding: 1px 5px;
+  flex: none;
 }
 
 /* ---- v2 week + pool ---- */
