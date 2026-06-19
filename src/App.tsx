@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Board } from "./components/Board";
+import { BoardV2 } from "./components/BoardV2";
 import { EmailIntake } from "./components/EmailIntake";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { AddProjectDialog } from "./components/AddProjectDialog";
 import { SyncDialog } from "./components/SyncDialog";
 import { TodayView } from "./components/TodayView";
+import { TodayV2 } from "./components/TodayV2";
+import { Dashboard } from "./components/Dashboard";
 import { STORAGE_KEY, StoreContext, decodeCandidates, loadState, reducer, saveState, uid, useStore } from "./store";
 import type { Urgency } from "./types";
+
+const UI_VERSION_KEY = "viz-org-ui";
 import { availableCredits, badgeById, level, withGame } from "./game";
 import {
   SyncContext,
@@ -21,7 +26,17 @@ import {
   type SyncStatus,
 } from "./sync";
 
-function Header({ onAddProject, onSync }: { onAddProject: () => void; onSync: () => void }) {
+function Header({
+  onAddProject,
+  onSync,
+  version,
+  onToggleVersion,
+}: {
+  onAddProject: () => void;
+  onSync: () => void;
+  version: UiVersion;
+  onToggleVersion: () => void;
+}) {
   const { state, dispatch } = useStore();
   const game = withGame(state.game);
   const pokes = useRef(0);
@@ -44,6 +59,13 @@ function Header({ onAddProject, onSync }: { onAddProject: () => void; onSync: ()
         </div>
       </div>
       <div className="header-actions">
+        <button
+          className="btn btn-ghost ver-toggle"
+          onClick={onToggleVersion}
+          title={version === "v2" ? "Switch back to the Classic interface" : "Try the new v2 interface"}
+        >
+          {version === "v2" ? "v2 ✦" : "Classic"}
+        </button>
         <span className="game-chip" title="Points · level · build credits ready">
           ⚡ {game.points} · Lvl {level(game.points)} · {availableCredits(game)}🛠️
         </span>
@@ -64,9 +86,6 @@ function Header({ onAddProject, onSync }: { onAddProject: () => void; onSync: ()
         <button className="btn btn-ghost" title="Back up or move your board to another device" onClick={onSync}>
           Backup / Sync
         </button>
-        <span className="board-meter" title="Allocated vs. total available time">
-          {state.projects.reduce((s, p) => s + Math.max(p.capacity, p.tasks.length, 1), 0)} / {state.boardCapacity} slots
-        </span>
       </div>
     </header>
   );
@@ -114,16 +133,11 @@ function BadgeToast() {
 
 const URGENCIES: Urgency[] = ["low", "normal", "high", "urgent"];
 
-function Workspace() {
-  const { dispatch } = useStore();
-  const [tab, setTab] = useState<"today" | "board">("today");
-  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
-  const [addOpen, setAddOpen] = useState(false);
-  const [syncOpen, setSyncOpen] = useState(false);
+type UiVersion = "classic" | "v2";
 
-  // Capture URL: opening …/#capture?title=…&link=…(&due=&notes=&from=&urgency=&estimate=)
-  // drops a pre-filled candidate into Email Intake. This is what the email
-  // bookmarklet targets, but any tool can construct the link.
+/** Shared #capture handler: drops a pre-filled candidate into Email Intake. */
+function useCaptureUrl(onArrive: () => void) {
+  const { dispatch } = useStore();
   useEffect(() => {
     const handle = () => {
       const hash = window.location.hash;
@@ -151,16 +165,25 @@ function Workspace() {
           },
         ],
       });
-      setTab("board"); // Email Intake lives on the Board tab — show the arrival
+      onArrive();
     };
     handle();
     window.addEventListener("hashchange", handle);
     return () => window.removeEventListener("hashchange", handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dispatch]);
+}
+
+function Workspace({ version, onToggleVersion }: { version: UiVersion; onToggleVersion: () => void }) {
+  const [tab, setTab] = useState<"today" | "board">("today");
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
+  useCaptureUrl(() => setTab("board"));
 
   return (
     <div className="app">
-      <Header onAddProject={() => setAddOpen(true)} onSync={() => setSyncOpen(true)} />
+      <Header onAddProject={() => setAddOpen(true)} onSync={() => setSyncOpen(true)} version={version} onToggleVersion={onToggleVersion} />
       <nav className="tabbar">
         <button className={`tab ${tab === "today" ? "is-active" : ""}`} onClick={() => setTab("today")}>
           Today
@@ -183,9 +206,57 @@ function Workspace() {
           <TodayView onOpenProject={setActiveProjectId} />
         </main>
       )}
-      {activeProjectId && (
-        <ProjectPanel projectId={activeProjectId} onClose={() => setActiveProjectId(null)} />
+      {activeProjectId && <ProjectPanel projectId={activeProjectId} onClose={() => setActiveProjectId(null)} />}
+      {addOpen && <AddProjectDialog onClose={() => setAddOpen(false)} />}
+      {syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} />}
+      <PointsToast />
+      <BadgeToast />
+    </div>
+  );
+}
+
+function WorkspaceV2({ version, onToggleVersion }: { version: UiVersion; onToggleVersion: () => void }) {
+  const [tab, setTab] = useState<"board" | "week" | "rewards">("board");
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
+  useCaptureUrl(() => setTab("board"));
+
+  return (
+    <div className="app">
+      <Header onAddProject={() => setAddOpen(true)} onSync={() => setSyncOpen(true)} version={version} onToggleVersion={onToggleVersion} />
+      <nav className="tabbar tabbar--v2">
+        <button className={`tab ${tab === "board" ? "is-active" : ""}`} onClick={() => setTab("board")}>
+          🗺️ Board
+        </button>
+        <button className={`tab ${tab === "week" ? "is-active" : ""}`} onClick={() => setTab("week")}>
+          📅 Week
+        </button>
+        <button className={`tab ${tab === "rewards" ? "is-active" : ""}`} onClick={() => setTab("rewards")}>
+          🏆 Rewards
+        </button>
+      </nav>
+      {tab === "board" && (
+        <main className="layout">
+          <section className="board-column">
+            <BoardV2 onOpenProject={setActiveProjectId} onAddProject={() => setAddOpen(true)} />
+          </section>
+          <aside className="side-column">
+            <EmailIntake />
+          </aside>
+        </main>
       )}
+      {tab === "week" && (
+        <main className="layout layout--single">
+          <TodayV2 onOpenProject={setActiveProjectId} />
+        </main>
+      )}
+      {tab === "rewards" && (
+        <main className="layout layout--single">
+          <Dashboard />
+        </main>
+      )}
+      {activeProjectId && <ProjectPanel projectId={activeProjectId} onClose={() => setActiveProjectId(null)} />}
       {addOpen && <AddProjectDialog onClose={() => setAddOpen(false)} />}
       {syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} />}
       <PointsToast />
@@ -340,10 +411,35 @@ export function App() {
   }, []);
   const syncNow = pushNow;
 
+  // Which interface to show. Per-device (localStorage), defaults to v2 with an
+  // always-available switch back to Classic — the safety net stays one click away.
+  const [version, setVersion] = useState<UiVersion>(() => {
+    try {
+      return localStorage.getItem(UI_VERSION_KEY) === "classic" ? "classic" : "v2";
+    } catch {
+      return "v2";
+    }
+  });
+  const toggleVersion = useCallback(() => {
+    setVersion((v) => {
+      const next: UiVersion = v === "v2" ? "classic" : "v2";
+      try {
+        localStorage.setItem(UI_VERSION_KEY, next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
   return (
     <StoreContext.Provider value={{ state, dispatch }}>
       <SyncContext.Provider value={{ config, status, connect, disconnect, syncNow, checkInbox: ingestInbox }}>
-        <Workspace />
+        {version === "v2" ? (
+          <WorkspaceV2 version={version} onToggleVersion={toggleVersion} />
+        ) : (
+          <Workspace version={version} onToggleVersion={toggleVersion} />
+        )}
       </SyncContext.Provider>
     </StoreContext.Provider>
   );

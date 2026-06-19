@@ -11,6 +11,12 @@ export const POINTS_PER_CREDIT = 100;
 export const FOCUS_POINTS = 8;
 const POINTS_PER_LEVEL = 120;
 
+// Surprise mechanics (the "unannounced" reinforcement).
+/** Chance a finished task pays a surprise bonus. */
+const LUCKY_CHANCE = 0.13;
+/** Finish another task within this window to extend a combo. */
+const COMBO_WINDOW_MS = 12 * 60 * 1000;
+
 export function emptyGame(): GameState {
   return {
     points: 0,
@@ -26,6 +32,12 @@ export function emptyGame(): GameState {
     bestDayPoints: 0,
     badges: [],
     awardedTaskIds: [],
+    minutesCompleted: 0,
+    luckyTotal: 0,
+    comboTotal: 0,
+    comboCount: 0,
+    comboBest: 0,
+    ledger: [],
   };
 }
 
@@ -125,7 +137,16 @@ export const BADGES: BadgeDef[] = [
   { id: "streak7", label: "Unstoppable", emoji: "⚡", hint: "7-day streak", test: (g) => g.streak >= 7 },
   { id: "focus10", label: "Deep Worker", emoji: "🎧", hint: "Finish 10 focus sessions", test: (g) => g.focusSessions >= 10 },
   { id: "credit1", label: "Earned a Build", emoji: "🛠️", hint: "Bank your first Build Credit", test: (g) => Math.floor(g.points / POINTS_PER_CREDIT) >= 1 },
+  // More milestones (v2).
+  { id: "fifty", label: "Half Century", emoji: "🏅", hint: "Complete 50 tasks", test: (g) => g.tasksCompleted >= 50 },
+  { id: "timelord", label: "Time Lord", emoji: "⏳", hint: "Finish 10 hours of work", test: (g) => (g.minutesCompleted ?? 0) >= 600 },
+  { id: "marathon", label: "Marathon Day", emoji: "🏃", hint: "300 points in one day", test: (g) => g.bestDayPoints >= 300 },
+  { id: "vault", label: "The Vault", emoji: "🏦", hint: "1,000 lifetime points", test: (g) => g.points >= 1000 },
+  { id: "fortnight", label: "Fortnight", emoji: "🌟", hint: "14-day streak", test: (g) => g.streak >= 14 },
   // Secret easter eggs (revealed only once unlocked).
+  { id: "lucky", label: "Lucky Drop", emoji: "🍀", hint: "Caught a surprise bonus", secret: true, test: never },
+  { id: "combo3", label: "Hat Trick", emoji: "🎰", hint: "Three finishes in a row, fast", secret: true, test: never },
+  { id: "combo5", label: "On Fire", emoji: "🚀", hint: "A five-task combo", secret: true, test: never },
   { id: "nightowl", label: "Night Owl", emoji: "🦉", hint: "Finished something after midnight", secret: true, test: never },
   { id: "earlybird", label: "Early Bird", emoji: "🐦", hint: "Finished something before 6am", secret: true, test: never },
   { id: "frogfirst", label: "Frog Legs", emoji: "🐸", hint: "Ate the frog first thing", secret: true, test: never },
@@ -164,17 +185,40 @@ export interface CompleteContext {
 /** Record a task completion. No-op if already counted. Returns new game + points awarded. */
 export function completeTask(game: GameState, task: Task, ctx: CompleteContext = {}): { game: GameState; awarded: number } {
   if (game.awardedTaskIds.includes(task.id)) return { game, awarded: 0 };
-  const pts = taskPoints(task);
-  let g = award(game, pts);
+  const base = taskPoints(task);
+  const now = Date.now();
+
+  // Combo: another finish soon after the last one extends a streak; from the
+  // third in a row it starts paying a small escalating bonus.
+  const within = !!game.lastCompleteAt && now - game.lastCompleteAt <= COMBO_WINDOW_MS;
+  const comboCount = within ? (game.comboCount ?? 1) + 1 : 1;
+  const comboBonus = comboCount >= 3 ? (comboCount - 2) * 5 : 0;
+
+  // Lucky drop: an occasional, unannounced surprise bonus.
+  const lucky = Math.random() < LUCKY_CHANCE ? 10 + Math.floor(Math.random() * 31) : 0;
+
+  const total = base + comboBonus + lucky;
+  let g = award(game, total);
   const wasFirstToday = g.tasksToday === 0;
+  const est = task.estimateMinutes ?? 30;
+  const entry = { id: task.id, title: task.title, points: total, base, lucky, combo: comboBonus, at: now };
   g = {
     ...g,
     tasksCompleted: g.tasksCompleted + 1,
     tasksToday: g.tasksToday + 1,
     heavyCompleted: g.heavyCompleted + (task.heavy ? 1 : 0),
     heavyToday: g.heavyToday + (task.heavy ? 1 : 0),
+    minutesCompleted: (g.minutesCompleted ?? 0) + est,
+    luckyTotal: (g.luckyTotal ?? 0) + lucky,
+    comboTotal: (g.comboTotal ?? 0) + comboBonus,
+    comboCount,
+    comboBest: Math.max(g.comboBest ?? 0, comboCount),
+    lastCompleteAt: now,
     awardedTaskIds: [...g.awardedTaskIds, task.id],
+    ledger: [entry, ...(g.ledger ?? [])].slice(0, 200),
   };
+  if (lucky) g = { ...g, lastLucky: { points: lucky, at: now } };
+  if (comboBonus) g = { ...g, lastCombo: { count: comboCount, bonus: comboBonus, at: now } };
   g = earnBadges(g);
 
   const secret: string[] = [];
@@ -184,9 +228,26 @@ export function completeTask(game: GameState, task: Task, ctx: CompleteContext =
   if (ctx.isFrog && wasFirstToday) secret.push("frogfirst");
   if (g.heavyToday >= 3) secret.push("pond");
   if (ctx.overdue) secret.push("late");
+  if (lucky) secret.push("lucky");
+  if (comboCount >= 3) secret.push("combo3");
+  if (comboCount >= 5) secret.push("combo5");
   g = addBadges(g, secret);
 
-  return { game: g, awarded: pts };
+  return { game: g, awarded: total };
+}
+
+/** A rough split of where lifetime points came from, for the dashboard. */
+export function pointsBreakdown(game: GameState): { label: string; points: number; color: string }[] {
+  const focus = game.focusSessions * FOCUS_POINTS;
+  const lucky = game.luckyTotal ?? 0;
+  const combo = game.comboTotal ?? 0;
+  const work = Math.max(0, game.points - focus - lucky - combo);
+  return [
+    { label: "Task work", points: work, color: "#6366f1" },
+    { label: "Focus sprints", points: focus, color: "#0ea5e9" },
+    { label: "Combos", points: combo, color: "#f59e0b" },
+    { label: "Lucky drops", points: lucky, color: "#10b981" },
+  ].filter((s) => s.points > 0);
 }
 
 /** Record a finished focus session. */

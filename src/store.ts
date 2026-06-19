@@ -51,6 +51,33 @@ export function projectMinutes(p: Project): number {
   return p.tasks.reduce((s, t) => s + (t.done ? 0 : t.estimateMinutes ?? 0), 0);
 }
 
+// --- v2: the board as a budget of work time ------------------------------
+
+/** Default weekly work-time budget (hours) the board represents. */
+export const WEEKLY_HOURS_DEFAULT = 40;
+/** Minutes an unestimated task is assumed to take, so it still has size. */
+export const FALLBACK_TASK_MINUTES = 30;
+
+/** A task's size in minutes for time-based sizing (unestimated → fallback). */
+export function taskMinutes(t: Task): number {
+  return t.estimateMinutes && t.estimateMinutes > 0 ? t.estimateMinutes : FALLBACK_TASK_MINUTES;
+}
+
+/** Minutes of open (not done) work a project holds, sizing the board box. */
+export function projectWorkMinutes(p: Project): number {
+  return p.tasks.reduce((s, t) => s + (t.done ? 0 : taskMinutes(t)), 0);
+}
+
+/** Total open work minutes across the whole board. */
+export function totalWorkMinutes(state: AppState): number {
+  return state.projects.reduce((s, p) => s + projectWorkMinutes(p), 0);
+}
+
+/** The board's weekly time budget in minutes. */
+export function weeklyBudgetMinutes(state: AppState): number {
+  return (state.weeklyHours ?? WEEKLY_HOURS_DEFAULT) * 60;
+}
+
 function today(offsetDays = 0): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
@@ -93,6 +120,7 @@ export function normalizeState(s: AppState): AppState {
     day: s.day && typeof s.day === "object" ? s.day : undefined,
     dayCapacities: s.dayCapacities && typeof s.dayCapacities === "object" ? s.dayCapacities : {},
     seenCandidateIds: Array.isArray(s.seenCandidateIds) ? s.seenCandidateIds : [],
+    weeklyHours: typeof s.weeklyHours === "number" && s.weeklyHours > 0 ? s.weeklyHours : WEEKLY_HOURS_DEFAULT,
   };
 }
 
@@ -146,6 +174,7 @@ export type Action =
   | { type: "setCapacity"; projectId: string; capacity: number }
   | { type: "deleteProject"; projectId: string }
   | { type: "setBoardCapacity"; capacity: number }
+  | { type: "setWeeklyHours"; hours: number }
   | { type: "addTask"; projectId: string; title: string; urgency?: Urgency; due?: string; estimateMinutes?: number }
   | { type: "toggleTask"; projectId: string; taskId: string }
   | { type: "updateTask"; projectId: string; taskId: string; patch: Partial<Task> }
@@ -201,6 +230,8 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case "setBoardCapacity":
       return { ...state, boardCapacity: Math.max(1, action.capacity) };
+    case "setWeeklyHours":
+      return { ...state, weeklyHours: Math.max(1, Math.round(action.hours)) };
     case "addTask":
       return mapProject(state, action.projectId, (p) => ({
         ...p,
@@ -613,6 +644,40 @@ export function tasksForDay(state: AppState, date: string): DayBoxItem[] {
   }
   const rank: Record<DayBoxReason, number> = { scheduled: 0, snoozed: 1, due: 2 };
   items.sort((a, b) => rank[a.reason] - rank[b.reason]);
+  return items;
+}
+
+/** Open tasks not yet assigned to any day — the pool under the v2 week strip. */
+export function unassignedTasks(state: AppState): PlanItem[] {
+  const items: PlanItem[] = [];
+  for (const project of state.projects) {
+    for (const task of project.tasks) {
+      if (!task.done && !task.scheduledFor) items.push({ task, project });
+    }
+  }
+  items.sort((a, b) => {
+    const ad = a.task.due ?? "9999-99-99";
+    const bd = b.task.due ?? "9999-99-99";
+    if (ad !== bd) return ad < bd ? -1 : 1;
+    return URGENCY_RANK[a.task.urgency] - URGENCY_RANK[b.task.urgency];
+  });
+  return items;
+}
+
+/**
+ * v2: open tasks explicitly assigned to a given day via `scheduledFor`. Today's
+ * box also sweeps up anything scheduled for an earlier day that never got done
+ * (carried over), so nothing silently falls off the back of the strip.
+ */
+export function assignedToDay(state: AppState, date: string, isToday: boolean): PlanItem[] {
+  const items: PlanItem[] = [];
+  for (const project of state.projects) {
+    for (const task of project.tasks) {
+      if (task.done || !task.scheduledFor) continue;
+      const hit = isToday ? task.scheduledFor <= date : task.scheduledFor === date;
+      if (hit) items.push({ task, project });
+    }
+  }
   return items;
 }
 

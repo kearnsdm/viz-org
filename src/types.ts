@@ -84,6 +84,8 @@ export interface AppState {
   /** Candidate ids already ingested once — guards the gist drop box (and any
    * re-pasted import) against double-importing the same tasks. */
   seenCandidateIds?: string[];
+  /** v2: total weekly work hours the board's time budget represents. */
+  weeklyHours?: number;
 }
 
 export interface DayPlan {
@@ -130,4 +132,38 @@ export interface GameState {
   lastAward?: { points: number; at: number };
   /** Transient: the most recently unlocked badge, for a celebratory toast. */
   lastBadge?: { id: string; at: number };
+  // --- v2 reinforcement extras (optional; older saves backfill to 0/[]). ---
+  /** Total estimated minutes of finished work. */
+  minutesCompleted?: number;
+  /** Lifetime points that came from surprise "lucky" drops. */
+  luckyTotal?: number;
+  /** Lifetime points that came from back-to-back combos. */
+  comboTotal?: number;
+  /** Current back-to-back combo length. */
+  comboCount?: number;
+  /** Longest combo ever reached. */
+  comboBest?: number;
+  /** Epoch ms of the last completion (drives the combo window). */
+  lastCompleteAt?: number;
+  /** A ledger of completed work: newest first, capped. */
+  ledger?: LedgerEntry[];
+  /** Transient: most recent lucky drop, for a special toast. */
+  lastLucky?: { points: number; at: number };
+  /** Transient: most recent combo bump, for a special toast. */
+  lastCombo?: { count: number; bonus: number; at: number };
+}
+
+/** One completed task in the points ledger. */
+export interface LedgerEntry {
+  id: string;
+  title: string;
+  /** Total points awarded (base + bonuses). */
+  points: number;
+  /** Base points from effort/urgency/heavy. */
+  base: number;
+  /** Surprise lucky bonus, if any. */
+  lucky: number;
+  /** Combo bonus, if any. */
+  combo: number;
+  at: number;
 }
