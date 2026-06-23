@@ -1257,31 +1257,18 @@ input[type="checkbox"] {
   box-shadow: var(--shadow);
   border-color: var(--accent);
 }
-.tboard-box__bands {
-  position: absolute;
-  inset: 0;
+/* Box = a header (name + total time) over a column of task stripes. */
+.tboard-box__header {
+  flex: none;
   display: flex;
-  flex-direction: column;
-}
-.tboard-band {
-  flex: 1 1 0;
-  min-height: 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
-}
-.tboard-box__body {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  padding: 6px 8px;
-  height: 100%;
-  pointer-events: none;
-}
-.tboard-box__name {
-  display: flex;
-  align-items: flex-start;
-  gap: 4px;
+  align-items: baseline;
+  gap: 5px;
+  padding: 5px 8px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 85%, transparent), transparent);
 }
 .tboard-box__nametext {
+  flex: 1;
+  min-width: 0;
   font-weight: 600;
   font-size: 11px;
   line-height: 1.2;
@@ -1292,10 +1279,45 @@ input[type="checkbox"] {
   word-break: break-word;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55), 0 0 2px rgba(0, 0, 0, 0.6);
 }
+.tboard-box__time {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
 .tboard-box .pill-admin {
   font-size: 8px;
   padding: 1px 5px;
   flex: none;
+  align-self: center;
+}
+.tboard-box__bands {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tboard-band {
+  flex: 1 1 0;
+  min-height: 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.18);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+.tboard-band.is-pressing {
+  box-shadow: inset 3px 0 0 0 #ef4444;
+}
+.tboard-band__label {
+  font-size: 10px;
+  line-height: 1.1;
+  color: var(--text);
+  opacity: 0.72;
+  padding: 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---- v2 week + pool ---- */

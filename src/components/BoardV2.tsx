@@ -34,11 +34,17 @@ function useMeasure<T extends HTMLElement>() {
 
 const FREE_ID = "__free__";
 
+/** Reserved for the name/time header inside a box, in px. */
+const HEADER_PX = 26;
+/** A stripe needs at least this many px of height before it shows its label. */
+const LABEL_MIN_PX = 15;
+
 /** A project box on the time board: sized by work-minutes, filled with one
- * subtle stripe per open task (stripe height ∝ that task's time). Only the
- * project name shows as text — task titles and the project's time/counts live
- * in the hover tooltips, so nothing overflows even a small box. */
-function ProjectBox({ project, onOpen }: { project: Project; onOpen: () => void }) {
+ * stripe per open task (stripe height ∝ that task's time). Detail is adaptive
+ * to the box's size — a header with the name and total time, plus a label on
+ * each stripe that has room for it; small boxes stay clean with just the name.
+ * Everything still has a hover tooltip. */
+function ProjectBox({ project, w, h, onOpen }: { project: Project; w: number; h: number; onOpen: () => void }) {
   const mins = projectWorkMinutes(project);
   const open = project.tasks.filter((t) => !t.done);
   const urgent = open.filter((t) => t.urgency === "urgent" || t.urgency === "high").length;
@@ -46,27 +52,35 @@ function ProjectBox({ project, onOpen }: { project: Project; onOpen: () => void 
     urgent ? ` · ${urgent} pressing` : ""
   } · click to open`;
 
+  const showTime = w >= 92 && mins > 0;
+  const bandsArea = Math.max(0, h - HEADER_PX);
+
   return (
     <button className="tboard-box" style={{ ["--accent" as string]: project.color }} onClick={onOpen} title={summary}>
-      {/* One quiet stripe per task, sized by its time; hover a stripe for its title. */}
-      <span className="tboard-box__bands">
-        {open.map((t, i) => (
-          <span
-            key={t.id}
-            className="tboard-band"
-            style={{
-              flexGrow: taskMinutes(t),
-              background: `color-mix(in srgb, var(--accent) ${i % 2 ? 32 : 20}%, transparent)`,
-            }}
-            title={`${t.title} · ${formatDuration(taskMinutes(t))}${t.estimateMinutes ? "" : " (est.)"}`}
-          />
-        ))}
+      <span className="tboard-box__header">
+        {project.isAdmin && <span className="pill pill-admin">admin</span>}
+        <span className="tboard-box__nametext">{project.name}</span>
+        {showTime && <span className="tboard-box__time">{formatDuration(mins)}</span>}
       </span>
-      <span className="tboard-box__body">
-        <span className="tboard-box__name">
-          {project.isAdmin && <span className="pill pill-admin">admin</span>}
-          <span className="tboard-box__nametext">{project.name}</span>
-        </span>
+      <span className="tboard-box__bands">
+        {open.map((t, i) => {
+          const m = taskMinutes(t);
+          const bandPx = mins > 0 ? (m / mins) * bandsArea : 0;
+          const pressing = t.urgency === "urgent" || t.urgency === "high";
+          return (
+            <span
+              key={t.id}
+              className={`tboard-band ${pressing ? "is-pressing" : ""}`}
+              style={{
+                flexGrow: m,
+                background: `color-mix(in srgb, var(--accent) ${i % 2 ? 30 : 18}%, transparent)`,
+              }}
+              title={`${t.title} · ${formatDuration(m)}${t.estimateMinutes ? "" : " (est.)"}`}
+            >
+              {bandPx >= LABEL_MIN_PX && w >= 92 && <span className="tboard-band__label">{t.title}</span>}
+            </span>
+          );
+        })}
       </span>
     </button>
   );
@@ -164,7 +178,7 @@ export function BoardV2({
           if (!project) return null;
           return (
             <div key={r.id} className="box-slot" style={stylePos}>
-              <ProjectBox project={project} onOpen={() => onOpenProject(project.id)} />
+              <ProjectBox project={project} w={stylePos.width} h={stylePos.height} onOpen={() => onOpenProject(project.id)} />
             </div>
           );
         })}
