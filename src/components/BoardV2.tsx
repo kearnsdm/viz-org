@@ -17,12 +17,17 @@ function useMeasure<T extends HTMLElement>() {
   useEffect(() => {
     if (!ref.current) return;
     const el = ref.current;
-    const ro = new ResizeObserver((entries) => {
-      const r = entries[0].contentRect;
-      setSize({ w: r.width, h: r.height });
-    });
+    const measure = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    // Measure immediately (and next frame) rather than waiting on the first
+    // ResizeObserver callback, which can be skipped on initial mount.
+    measure();
+    const raf = requestAnimationFrame(measure);
+    const ro = new ResizeObserver(measure);
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+    };
   }, []);
   return { ref, size };
 }
