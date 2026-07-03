@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { AppState } from "./types";
+import type { AppState, Stream } from "./types";
 
 // Cross-device sync via a private GitHub Gist. GitHub's API sends proper CORS
 // headers, so this connects reliably from the app's origin — no self-hosted
@@ -173,4 +173,37 @@ export function useSync(): SyncContextValue {
   const ctx = useContext(SyncContext);
   if (!ctx) throw new Error("useSync must be used within SyncContext provider");
   return ctx;
+}
+
+// --- v3: checklist streams (a third file in the same private gist) --------
+// Mirrors the board/inbox helpers above. The whole checklist registry lives in
+// one file so it round-trips independently of board state — a bridge write here
+// never clobbers the board, and vice versa.
+
+const STREAMS_FILE = "viz-org-streams.json";
+
+function serializeStreams(streams: Stream[]): string {
+  return JSON.stringify({ v: 3, streams, savedAt: new Date().toISOString() }, null, 2);
+}
+
+/** Fetch the remote checklist streams, or [] if the file is empty/absent. */
+export async function pullStreams(cfg: SyncConfig): Promise<Stream[]> {
+  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
+  const file = gist.files?.[STREAMS_FILE];
+  if (!file) return [];
+  let content: string = file.content ?? "";
+  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
+  if (!content.trim()) return [];
+  const parsed = JSON.parse(content);
+  if (parsed && Array.isArray(parsed.streams)) return parsed.streams as Stream[];
+  if (Array.isArray(parsed)) return parsed as Stream[];
+  return [];
+}
+
+/** Save all checklist streams to the gist (whole-file replace). */
+export async function pushStreams(cfg: SyncConfig, streams: Stream[]): Promise<void> {
+  await gh(`/gists/${cfg.gistId}`, cfg.token, {
+    method: "PATCH",
+    body: JSON.stringify({ files: { [STREAMS_FILE]: { content: serializeStreams(streams) } } }),
+  });
 }

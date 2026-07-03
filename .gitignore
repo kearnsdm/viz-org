@@ -12,3 +12,8 @@ dist-ssr
 
 # Machine-specific Claude Code launch config (paths into local temp dirs)
 .claude/launch.json
+
+# viz-relay secrets / runtime (never commit)
+server/viz-relay-config.php
+server/viz-relay-rate.json
+server/viz-data.json

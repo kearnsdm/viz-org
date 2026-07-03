@@ -167,3 +167,56 @@ export interface LedgerEntry {
   combo: number;
   at: number;
 }
+
+// --- v3: checklist streams -------------------------------------------------
+// A "stream" bundles one task's identity, its checklist, its history, and its
+// recall handle (glyph + codename + tint). Streams live in their own gist file
+// (viz-org-streams.json) and a separate localStorage key, so the board schema
+// above is left untouched. Stamp: v:3.
+
+export type StreamItemState = "open" | "done" | "dropped";
+
+export interface StreamItem {
+  id: string;
+  text: string;
+  state: StreamItemState;
+  addedAt: number;
+  /** Set when the item moves to done or dropped. */
+  closedAt?: number;
+}
+
+export type StreamEventKind =
+  | "create" | "bind" | "add" | "check" | "uncheck" | "drop" | "rename" | "replan";
+
+/** Append-only audit entry — nothing in a stream's history is ever destroyed. */
+export interface StreamEvent {
+  at: number;
+  kind: StreamEventKind;
+  itemId?: string;
+  detail?: string;
+}
+
+export interface Stream {
+  /** Internal plumbing — never surfaced to the user. */
+  streamId: string;
+  /** null = orphan / unbound (sent before a matching board task exists). */
+  taskId: string | null;
+  /** Human anchor, e.g. "Frontiers syllable ms". */
+  name: string;
+  /** Other names the user calls it; used for resolution. */
+  aliases: string[];
+  /** Memorable handle, unique within the category, e.g. "Tidewater". */
+  codename: string;
+  /** Work category / project — drives the hue. */
+  category: string;
+  /** Emoji or icon id — the recall glyph. */
+  glyph: string;
+  /** Lightness step (0..n) within the category hue. Never a new hue. */
+  tintIndex: number;
+  /** Working checklist (open items plus recently closed ones). */
+  items: StreamItem[];
+  /** Append-only; closed items and replans fold in here. */
+  history: StreamEvent[];
+  createdAt: number;
+  updatedAt: number;
+}
