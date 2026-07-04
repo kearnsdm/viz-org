@@ -13,8 +13,12 @@ GitHub API headers for all calls: `Authorization: Bearer <token>`, `Accept: appl
 
 **Known bug (top of v-next):** sync is whole-file last-write-wins; two live devices clobber each other. Interim rule: one device at a time, Sync now before switching.
 
-## The relay (preferred once deployed)
-`server/viz-relay.php` on DreamHost holds the PAT server-side; callers use a low-stakes relay key via the `X-Viz-Key` header. Actions: `GET ?action=board`, `GET/POST ?action=streams`, `POST ?action=append` ({candidates:[…]}). Relay URL: *(fill in after deploy — the URL is not secret; the key is, and is never committed)*. Until the relay is live, the PAT is pasted once per chat session, used from the execution environment, and never stored in memory or any file. Never commit a real token or `viz-relay-config.php`.
+## Deploying — two separate deployments; do not conflate them
+1. **The app** (everything in `src/`, `index.html`, `public/`): push to `main` → the Pages Action builds and publishes automatically. That is the entire app deploy. Never build or upload the app anywhere else.
+2. **The relay** (`server/viz-relay.php` + `server/viz-relay-config.php`): lives on DreamHost, NOT on GitHub Pages. Deployed once by copying both files to the server (scp or DreamHost file manager) at `~/devinkearns.com/viz/`. Redeploy only when the relay code itself changes. `viz-relay-config.php` holds the secrets, is gitignored, and is never committed. The legacy `server/viz-sync.php` is a dormant fallback — do not deploy or modify it.
+
+## The relay (LIVE)
+URL: `https://www.devinkearns.com/viz/viz-relay.php` (the bare domain 301s to www — always use www). Auth: the low-stakes relay key via the `X-Viz-Key` header; the key lives in Devin's password manager and the server config only. Actions: `GET ?action=board`, `GET ?action=streams`, `POST ?action=streams` (whole-file replace), `POST ?action=append` ({candidates:[…]}, deduped by id). The gist PAT lives ONLY in the server config — it is never pasted in chat, stored in memory, or committed. Verified live 2026-07-02.
 
 ## Standing procedures
 - **Capture:** "add X to viz-org" → push an unprocessed candidate to the inbox (suggest a project if obvious; never auto-file). It lands in Intake for triage: edit + file, or delete.
