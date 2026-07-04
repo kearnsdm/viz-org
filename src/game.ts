@@ -1,4 +1,4 @@
-import type { GameState, Task } from "./types";
+import type { GameState, LedgerEntry, Task } from "./types";
 
 // The motivation layer: a small token economy built on behaviorist ideas.
 // - Completing work earns points (more for urgent and *heavy*/aversive tasks).
@@ -9,6 +9,10 @@ import type { GameState, Task } from "./types";
 
 export const POINTS_PER_CREDIT = 100;
 export const FOCUS_POINTS = 8;
+/** v3 contract: the first completed sprint of the day pays double. */
+export const FIRST_SPRINT_POINTS = 16;
+/** v3 contract: each checked component pays +2, capped at the task's value. */
+export const COMPONENT_POINTS = 2;
 const POINTS_PER_LEVEL = 120;
 
 // Surprise mechanics (the "unannounced" reinforcement).
@@ -201,7 +205,14 @@ export function completeTask(game: GameState, task: Task, ctx: CompleteContext =
   let g = award(game, total);
   const wasFirstToday = g.tasksToday === 0;
   const est = task.estimateMinutes ?? 30;
-  const entry = { id: task.id, title: task.title, points: total, base, lucky, combo: comboBonus, at: now };
+  const effort = Math.max(5, Math.round(est / 6));
+  const tags = [`${effort} effort`];
+  if (task.urgency === "urgent") tags.push("urgent +5");
+  else if (task.urgency === "high") tags.push("high +3");
+  if (task.heavy) tags.push("🔥 frog +15");
+  if (comboBonus) tags.push(`🎰 combo +${comboBonus}`);
+  if (lucky) tags.push(`🍀 lucky +${lucky}`);
+  const entry: LedgerEntry = { id: task.id, title: task.title, points: total, base, lucky, combo: comboBonus, at: now, tags };
   g = {
     ...g,
     tasksCompleted: g.tasksCompleted + 1,
@@ -250,11 +261,185 @@ export function pointsBreakdown(game: GameState): { label: string; points: numbe
   ].filter((s) => s.points > 0);
 }
 
-/** Record a finished focus session. */
+/** Record a finished focus session. The first sprint of the day pays double. */
 export function completeFocus(game: GameState): { game: GameState; awarded: number } {
-  let g = award(game, FOCUS_POINTS);
-  g = { ...g, focusSessions: g.focusSessions + 1, focusToday: g.focusToday + 1 };
+  const rolled = rollDay(game);
+  const first = rolled.focusToday === 0;
+  const pts = first ? FIRST_SPRINT_POINTS : FOCUS_POINTS;
+  let g = award(rolled, pts);
+  const entry: LedgerEntry = {
+    id: `spr_${Date.now().toString(36)}`,
+    title: "Focus sprint completed",
+    points: pts,
+    base: pts,
+    lucky: 0,
+    combo: 0,
+    at: Date.now(),
+    tags: first ? ["showed up", "first of day ×2"] : ["showed up"],
+  };
+  g = {
+    ...g,
+    focusSessions: g.focusSessions + 1,
+    focusToday: g.focusToday + 1,
+    ledger: [entry, ...(g.ledger ?? [])].slice(0, 200),
+  };
   g = earnBadges(g);
   if (g.focusToday >= 3) g = addBadges(g, ["grind"]);
-  return { game: g, awarded: FOCUS_POINTS };
+  return { game: g, awarded: pts };
+}
+
+// --- v3: component checks (+2 per step, capped at the task's value) --------
+
+/** Award a checked component step. Pays +2 until the task's own value is
+ * exhausted, then further checks pay nothing (the cap keeps step-splitting
+ * from inflating a task past what finishing it is worth). */
+export function checkComponent(game: GameState, task: Task, label: string): { game: GameState; awarded: number } {
+  const tally = game.componentPointsByTask?.[task.id] ?? 0;
+  const cap = taskPoints(task);
+  const pay = Math.max(0, Math.min(COMPONENT_POINTS, cap - tally));
+  const byTask = { ...(game.componentPointsByTask ?? {}), [task.id]: tally + pay };
+  let g = pay > 0 ? award(game, pay) : rollDay(game);
+  const entry: LedgerEntry = {
+    id: `cmp_${task.id}_${Date.now().toString(36)}`,
+    title: `Step: ${label}`,
+    points: pay,
+    base: pay,
+    lucky: 0,
+    combo: 0,
+    at: Date.now(),
+    tags: ["component"],
+  };
+  g = { ...g, componentPointsByTask: byTask, ledger: [entry, ...(g.ledger ?? [])].slice(0, 200) };
+  return { game: g, awarded: pay };
+}
+
+/** Reverse the most recent component award for a task (an unchecked step). */
+export function uncheckComponent(game: GameState, task: Task, label: string): GameState {
+  const tally = game.componentPointsByTask?.[task.id] ?? 0;
+  const back = Math.min(COMPONENT_POINTS, tally);
+  const byTask = { ...(game.componentPointsByTask ?? {}), [task.id]: Math.max(0, tally - back) };
+  const ledger = [...(game.ledger ?? [])];
+  const i = ledger.findIndex((e) => e.title === `Step: ${label}`);
+  if (i > -1) ledger.splice(i, 1);
+  return {
+    ...game,
+    points: Math.max(0, game.points - back),
+    pointsToday: Math.max(0, game.pointsToday - back),
+    componentPointsByTask: byTask,
+    ledger,
+  };
+}
+
+// --- v3: undo a completion (the Undo toast beats a confirm dialog) ---------
+
+/** Fully reverse a task-completion award, so board-hover completes are safely
+ * undoable. Inverse of completeTask for everything it counted. */
+export function reverseCompletion(game: GameState, task: Task): GameState {
+  if (!game.awardedTaskIds.includes(task.id)) return game;
+  const entry = (game.ledger ?? []).find((e) => e.id === task.id);
+  const pts = entry?.points ?? taskPoints(task);
+  const est = task.estimateMinutes ?? 30;
+  return {
+    ...game,
+    points: Math.max(0, game.points - pts),
+    pointsToday: Math.max(0, game.pointsToday - pts),
+    tasksCompleted: Math.max(0, game.tasksCompleted - 1),
+    tasksToday: Math.max(0, game.tasksToday - 1),
+    heavyCompleted: Math.max(0, game.heavyCompleted - (task.heavy ? 1 : 0)),
+    heavyToday: Math.max(0, game.heavyToday - (task.heavy ? 1 : 0)),
+    minutesCompleted: Math.max(0, (game.minutesCompleted ?? 0) - est),
+    luckyTotal: Math.max(0, (game.luckyTotal ?? 0) - (entry?.lucky ?? 0)),
+    comboTotal: Math.max(0, (game.comboTotal ?? 0) - (entry?.combo ?? 0)),
+    awardedTaskIds: game.awardedTaskIds.filter((id) => id !== task.id),
+    ledger: (game.ledger ?? []).filter((e) => e.id !== task.id),
+  };
+}
+
+// --- v3: ranks — certify practice, never attendance ------------------------
+// Advance on points AND demonstrated practice (frogs, sprints, builds).
+// Ranks never decay (all inputs are lifetime counters); perks are expressive
+// only — themes and glyph packs, never function. DRAFT ladder, Devin to ratify.
+
+export interface RankReq {
+  label: string;
+  have: (g: GameState) => number;
+  need: number;
+}
+
+export interface RankDef {
+  name: string;
+  motto: string;
+  reqs: RankReq[];
+  perk?: string;
+}
+
+export const RANKS: RankDef[] = [
+  { name: "Clerk of Intake", motto: "you capture what arrives", reqs: [] },
+  {
+    name: "List Keeper",
+    motto: "you finish what you list",
+    reqs: [
+      { label: "120 pts", have: (g) => g.points, need: 120 },
+      { label: "10 tasks completed", have: (g) => g.tasksCompleted, need: 10 },
+    ],
+  },
+  {
+    name: "Box Builder",
+    motto: "you shape work into projects",
+    reqs: [
+      { label: "240 pts", have: (g) => g.points, need: 240 },
+      { label: "1 credit banked", have: (g) => Math.floor(g.points / POINTS_PER_CREDIT), need: 1 },
+    ],
+  },
+  {
+    name: "Frog Handler",
+    motto: "you face heavy work on purpose",
+    reqs: [
+      { label: "360 pts", have: (g) => g.points, need: 360 },
+      { label: "3 frogs eaten", have: (g) => g.heavyCompleted, need: 3 },
+    ],
+  },
+  {
+    name: "Cartographer",
+    motto: "you navigate the whole landscape",
+    perk: "Slate board theme",
+    reqs: [
+      { label: "480 pts", have: (g) => g.points, need: 480 },
+      { label: "5 frogs eaten", have: (g) => g.heavyCompleted, need: 5 },
+      { label: "5 sprints finished", have: (g) => g.focusSessions, need: 5 },
+      { label: "2 builds redeemed", have: (g) => g.creditsRedeemed, need: 2 },
+    ],
+  },
+  {
+    name: "Frogkeeper",
+    motto: "heavy work is routine, not crisis",
+    perk: "Field-Notes glyph pack + Dawn theme",
+    reqs: [
+      { label: "720 pts", have: (g) => g.points, need: 720 },
+      { label: "10 frogs eaten", have: (g) => g.heavyCompleted, need: 10 },
+      { label: "12 sprints finished", have: (g) => g.focusSessions, need: 12 },
+      { label: "4 builds redeemed", have: (g) => g.creditsRedeemed, need: 4 },
+    ],
+  },
+  {
+    name: "Landscape Architect",
+    motto: "you redesign how the work flows",
+    perk: "custom codename word bank",
+    reqs: [
+      { label: "1,000 pts", have: (g) => g.points, need: 1000 },
+      { label: "15 frogs eaten", have: (g) => g.heavyCompleted, need: 15 },
+      { label: "6 builds redeemed", have: (g) => g.creditsRedeemed, need: 6 },
+    ],
+  },
+];
+
+/** Highest rank whose every requirement is met (ranks never decay in practice
+ * because all inputs are lifetime counters). */
+export function rankIndex(g: GameState): number {
+  let idx = 0;
+  for (let i = 1; i < RANKS.length; i++) {
+    if (RANKS[i].reqs.every((r) => r.have(g) >= r.need)) idx = i;
+    else break;
+  }
+  return idx;
 }

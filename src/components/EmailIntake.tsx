@@ -50,7 +50,7 @@ export function EmailIntake() {
   return (
     <div className="card email-intake">
       <div className="card__header">
-        <h2>Email Intake</h2>
+        <h2>Intake</h2>
         <div className="header-buttons">
           <button className="btn btn-sm btn-ghost" onClick={() => setShowCapture((v) => !v)}>
             ✉ Bookmarklet

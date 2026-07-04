@@ -35,6 +35,9 @@ export interface Task {
   source?: string;
 }
 
+/** v3 luminance tier — priority is carried by brightness, exceptions only. */
+export type ProjectTier = "elevated" | "normal" | "dimmed";
+
 export interface Project {
   id: string;
   name: string;
@@ -43,10 +46,14 @@ export interface Project {
    * Slots the user has allocated to this project on the board. The box area is
    * proportional to `max(capacity, tasks.length)`. Allocating more capacity
    * than there are tasks reserves empty, plannable space.
+   * v3 reads this as *intended hours* — the Intended board sizes boxes by
+   * `capacity * 60` minutes and shows booked-over-intended as an overflow lip.
    */
   capacity: number;
   /** A project that cannot be deleted and receives loose/admin tasks. */
   isAdmin?: boolean;
+  /** v3: luminance tier (default "normal" — exceptions-only marking). */
+  tier?: ProjectTier;
   tasks: Task[];
 }
 
@@ -147,6 +154,8 @@ export interface GameState {
   lastCompleteAt?: number;
   /** A ledger of completed work: newest first, capped. */
   ledger?: LedgerEntry[];
+  /** v3: component points already paid per task id (caps checks at task value). */
+  componentPointsByTask?: Record<string, number>;
   /** Transient: most recent lucky drop, for a special toast. */
   lastLucky?: { points: number; at: number };
   /** Transient: most recent combo bump, for a special toast. */
@@ -166,6 +175,35 @@ export interface LedgerEntry {
   /** Combo bonus, if any. */
   combo: number;
   at: number;
+  /** v3: short reason tags shown in the Rewards ledger ("10 effort", "🔥 +15"). */
+  tags?: string[];
+}
+
+// --- v3: the Analysis tab --------------------------------------------------
+// Findings are AUTHORED OUTSIDE THE APP (Claude writes viz-org-analysis.json
+// via the bridge); the tab only renders them. The app never writes this file.
+
+export interface AnalysisFinding {
+  /** Small glyph for the card chip, e.g. "⚖", "◔", "🔥", "⏰". */
+  k?: string;
+  /** Headline of the finding. */
+  t: string;
+  /** Evidence line. */
+  e?: string;
+  /** Why it matters. */
+  w?: string;
+  /** Project this points at (name — resolved fuzzily against the board). */
+  project?: string;
+  /** Offer a "▶ Sprint on it" action. */
+  sprint?: boolean;
+}
+
+export interface AnalysisDoc {
+  /** The single most valuable action, rendered at the top. */
+  ifYouDoOneThing?: string;
+  findings?: AnalysisFinding[];
+  savedAt?: string;
+  lastReview?: string | null;
 }
 
 // --- v3: checklist streams -------------------------------------------------

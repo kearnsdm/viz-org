@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { AppState, Stream } from "./types";
+import type { AnalysisDoc, AppState, Stream } from "./types";
 
 // Cross-device sync via a private GitHub Gist. GitHub's API sends proper CORS
 // headers, so this connects reliably from the app's origin — no self-hosted
@@ -206,4 +206,27 @@ export async function pushStreams(cfg: SyncConfig, streams: Stream[]): Promise<v
     method: "PATCH",
     body: JSON.stringify({ files: { [STREAMS_FILE]: { content: serializeStreams(streams) } } }),
   });
+}
+
+// --- v3: the Analysis tab (read-only) ---------------------------------------
+// viz-org-analysis.json is AUTHORED BY CLAUDE via the bridge; the app only
+// renders it. There is deliberately no pushAnalysis — the app never writes
+// this file (the contract ledger inside it is not the app's to run).
+
+const ANALYSIS_FILE = "viz-org-analysis.json";
+
+/** Fetch the analysis document, or null if absent/unreadable. */
+export async function pullAnalysis(cfg: SyncConfig): Promise<AnalysisDoc | null> {
+  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
+  const file = gist.files?.[ANALYSIS_FILE];
+  if (!file) return null;
+  let content: string = file.content ?? "";
+  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
+  if (!content.trim()) return null;
+  try {
+    const parsed = JSON.parse(content);
+    return parsed && typeof parsed === "object" ? (parsed as AnalysisDoc) : null;
+  } catch {
+    return null;
+  }
 }

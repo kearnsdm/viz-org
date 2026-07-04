@@ -8,11 +8,21 @@ import { SyncDialog } from "./components/SyncDialog";
 import { TodayView } from "./components/TodayView";
 import { TodayV2 } from "./components/TodayV2";
 import { Dashboard } from "./components/Dashboard";
-import { STORAGE_KEY, StoreContext, decodeCandidates, loadState, reducer, saveState, uid, useStore } from "./store";
+import { BoardV3 } from "./components/BoardV3";
+import { WeekV3 } from "./components/WeekV3";
+import { TaskSheet } from "./components/TaskSheet";
+import { ProjectViewV3 } from "./components/ProjectViewV3";
+import { ArchiveV3 } from "./components/ArchiveV3";
+import { AnalysisV3 } from "./components/AnalysisV3";
+import { RewardsV3 } from "./components/RewardsV3";
+import { IntakeV3 } from "./components/IntakeV3";
+import { FocusV3 } from "./components/FocusV3";
+import { STORAGE_KEY, StoreContext, decodeCandidates, findTaskItem, loadState, reducer, saveState, uid, useStore } from "./store";
+import { StreamsContext, loadStreams, saveStreams, streamsReducer } from "./streams";
 import type { Urgency } from "./types";
 
 const UI_VERSION_KEY = "viz-org-ui";
-import { availableCredits, badgeById, level, withGame } from "./game";
+import { RANKS, availableCredits, badgeById, level, rankIndex, withGame } from "./game";
 import {
   SyncContext,
   clearInbox,
@@ -20,7 +30,9 @@ import {
   loadSyncConfig,
   pullInbox,
   pullRemoteRetrying,
+  pullStreams,
   pushRemoteRetrying,
+  pushStreams,
   saveSyncConfig,
   type SyncConfig,
   type SyncStatus,
@@ -133,7 +145,7 @@ function BadgeToast() {
 
 const URGENCIES: Urgency[] = ["low", "normal", "high", "urgent"];
 
-type UiVersion = "classic" | "v2";
+type UiVersion = "classic" | "v2" | "v3";
 
 /** Shared #capture handler: drops a pre-filled candidate into Email Intake. */
 function useCaptureUrl(onArrive: () => void) {
@@ -265,6 +277,144 @@ function WorkspaceV2({ version, onToggleVersion }: { version: UiVersion; onToggl
   );
 }
 
+// --- v3: the Continuous Landscape (docs/v3-ui-spec.html is the spec) --------
+
+type V3Tab = "board" | "week" | "intake" | "archive" | "rewards" | "analysis";
+
+const V3_TABS: Array<{ id: V3Tab; label: string }> = [
+  { id: "board", label: "Board" },
+  { id: "week", label: "Week" },
+  { id: "intake", label: "Intake" },
+  { id: "archive", label: "Archive" },
+  { id: "rewards", label: "Rewards" },
+  { id: "analysis", label: "Analysis" },
+];
+
+function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggleVersion: () => void }) {
+  const { state } = useStore();
+  const [tab, setTab] = useState<V3Tab>("board");
+  const [projectView, setProjectView] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<{ projectId: string; taskId: string } | null>(null);
+  const [focus, setFocus] = useState<{ title?: string } | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [syncOpen, setSyncOpen] = useState(false);
+  const [toast, setToast] = useState<{ msg: string; undo?: () => void } | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  useCaptureUrl(() => {
+    setProjectView(null);
+    setTab("intake");
+  });
+
+  const notify = useCallback((msg: string, undo?: () => void) => {
+    setToast({ msg, undo });
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3400);
+  }, []);
+
+  const goTab = (t: V3Tab) => {
+    setProjectView(null);
+    setTab(t);
+  };
+  const openTask = (projectId: string, taskId: string) => setSheet({ projectId, taskId });
+  const sprintOn = (projectId: string, taskId?: string) => {
+    setProjectView(projectId);
+    const title = taskId ? findTaskItem(state, taskId)?.task.title : undefined;
+    setFocus({ title });
+  };
+
+  const g = withGame(state.game);
+  const rank = RANKS[rankIndex(g)];
+  const sheetTitle = sheet ? findTaskItem(state, sheet.taskId)?.task.title : undefined;
+
+  return (
+    <div className="v3">
+      <div className="top">
+        <div className="logo" title="Board" onClick={() => goTab("board")}>
+          ▦
+        </div>
+        <div style={{ cursor: "pointer" }} title="Board" onClick={() => goTab("board")}>
+          <h1>viz-org v3 · Continuous Landscape</h1>
+          <div className="sub">the week as one bounded field — boxes are hours, stripes are tasks</div>
+        </div>
+        <div className="sp" />
+        <div className="hud" title="Points · rank · build credits ready">
+          ⚡ {g.points} · L{rankIndex(g) + 1} {rank.name} · 🛠️ {availableCredits(g)}
+        </div>
+        <button className="btn" onClick={() => setAddOpen(true)}>
+          + New project
+        </button>
+        <button className="btn" title="Back up or move your board" onClick={() => setSyncOpen(true)}>
+          Backup / Sync
+        </button>
+        <button className="btn" title="Switch interface version" onClick={onToggleVersion}>
+          {version === "v3" ? "v3 ✦" : version}
+        </button>
+        <div className="tabs">
+          {V3_TABS.map((t) => (
+            <button key={t.id} className={tab === t.id && !projectView ? "on" : ""} onClick={() => goTab(t.id)}>
+              {t.label}
+              {t.id === "intake" && state.inbox.length > 0 ? ` (${state.inbox.length})` : ""}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {projectView ? (
+        <ProjectViewV3
+          projectId={projectView}
+          onBack={() => setProjectView(null)}
+          onWeek={() => goTab("week")}
+          onOpenTask={(taskId) => openTask(projectView, taskId)}
+          onSprint={() => setFocus({})}
+          notify={notify}
+        />
+      ) : tab === "board" ? (
+        <BoardV3 onOpenProject={setProjectView} onOpenTask={openTask} onStartSprint={sprintOn} notify={notify} />
+      ) : tab === "week" ? (
+        <WeekV3 onOpenTask={openTask} />
+      ) : tab === "intake" ? (
+        <IntakeV3 />
+      ) : tab === "archive" ? (
+        <ArchiveV3 onOpenProject={setProjectView} />
+      ) : tab === "rewards" ? (
+        <RewardsV3 notify={notify} />
+      ) : (
+        <AnalysisV3 onOpenProject={setProjectView} onSprint={(pid) => sprintOn(pid)} />
+      )}
+
+      {sheet && (
+        <TaskSheet
+          projectId={sheet.projectId}
+          taskId={sheet.taskId}
+          onClose={() => setSheet(null)}
+          onSprint={() => {
+            setSheet(null);
+            setFocus({ title: sheetTitle });
+          }}
+          notify={notify}
+        />
+      )}
+      {focus && <FocusV3 title={focus.title} onClose={() => setFocus(null)} notify={notify} />}
+      {addOpen && <AddProjectDialog onClose={() => setAddOpen(false)} />}
+      {syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} />}
+      <BadgeToast />
+      <div className={`toast3 ${toast ? "on" : ""}`}>
+        {toast?.msg}
+        {toast?.undo && (
+          <button
+            onClick={() => {
+              toast.undo?.();
+              setToast(null);
+            }}
+          >
+            Undo
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function App() {
   const [state, dispatch] = useReducer(reducer, undefined, loadState);
   const [config, setConfig] = useState<SyncConfig | null>(loadSyncConfig);
@@ -273,10 +423,50 @@ export function App() {
   const latest = useRef(state);
   latest.current = state;
 
+  // v3 checklist streams: their own reducer, storage key, and gist file.
+  const [streams, dispatchStreams] = useReducer(streamsReducer, undefined, loadStreams);
+  const streamsHydrated = useRef(false);
+  const latestStreams = useRef(streams);
+  latestStreams.current = streams;
+
   // Persist locally on every change.
   useEffect(() => {
     saveState(state);
   }, [state]);
+  useEffect(() => {
+    saveStreams(streams);
+  }, [streams]);
+
+  // Pull remote streams once sync is configured; merge is LWW by updatedAt so
+  // a chat-written checklist and a local check can't clobber each other.
+  useEffect(() => {
+    streamsHydrated.current = false;
+    if (!config) {
+      streamsHydrated.current = true;
+      return;
+    }
+    let cancelled = false;
+    pullStreams(config)
+      .then((remote) => {
+        if (!cancelled && remote.length) dispatchStreams({ type: "ingest", streams: remote });
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) streamsHydrated.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [config]);
+
+  // Push stream changes up (debounced) once the initial pull has settled.
+  useEffect(() => {
+    if (!config || !streamsHydrated.current) return;
+    const id = setTimeout(() => {
+      pushStreams(config, latestStreams.current).catch(() => {});
+    }, 1200);
+    return () => clearTimeout(id);
+  }, [streams, config]);
 
   // Live-sync across tabs/windows on the same browser (same-computer screens).
   useEffect(() => {
@@ -411,18 +601,19 @@ export function App() {
   }, []);
   const syncNow = pushNow;
 
-  // Which interface to show. Per-device (localStorage), defaults to v2 with an
-  // always-available switch back to Classic — the safety net stays one click away.
+  // Which interface to show. Per-device (localStorage), defaults to v3; the
+  // toggle cycles v3 → v2 → classic, so the safety nets stay one click away.
   const [version, setVersion] = useState<UiVersion>(() => {
     try {
-      return localStorage.getItem(UI_VERSION_KEY) === "classic" ? "classic" : "v2";
+      const stored = localStorage.getItem(UI_VERSION_KEY);
+      return stored === "classic" || stored === "v2" ? stored : "v3";
     } catch {
-      return "v2";
+      return "v3";
     }
   });
   const toggleVersion = useCallback(() => {
     setVersion((v) => {
-      const next: UiVersion = v === "v2" ? "classic" : "v2";
+      const next: UiVersion = v === "v3" ? "v2" : v === "v2" ? "classic" : "v3";
       try {
         localStorage.setItem(UI_VERSION_KEY, next);
       } catch {
@@ -434,13 +625,17 @@ export function App() {
 
   return (
     <StoreContext.Provider value={{ state, dispatch }}>
-      <SyncContext.Provider value={{ config, status, connect, disconnect, syncNow, checkInbox: ingestInbox }}>
-        {version === "v2" ? (
-          <WorkspaceV2 version={version} onToggleVersion={toggleVersion} />
-        ) : (
-          <Workspace version={version} onToggleVersion={toggleVersion} />
-        )}
-      </SyncContext.Provider>
+      <StreamsContext.Provider value={{ streams, dispatch: dispatchStreams }}>
+        <SyncContext.Provider value={{ config, status, connect, disconnect, syncNow, checkInbox: ingestInbox }}>
+          {version === "v3" ? (
+            <WorkspaceV3 version={version} onToggleVersion={toggleVersion} />
+          ) : version === "v2" ? (
+            <WorkspaceV2 version={version} onToggleVersion={toggleVersion} />
+          ) : (
+            <Workspace version={version} onToggleVersion={toggleVersion} />
+          )}
+        </SyncContext.Provider>
+      </StreamsContext.Provider>
     </StoreContext.Provider>
   );
 }

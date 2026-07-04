@@ -1,6 +1,18 @@
 import { createContext, useContext } from "react";
-import type { AppState, CandidateTask, Project, Task, Urgency } from "./types";
-import { addBadges, availableCredits, completeFocus, completeTask, emptyGame, isoDate, taskPoints, withGame } from "./game";
+import type { AppState, CandidateTask, Project, ProjectTier, Task, Urgency } from "./types";
+import {
+  addBadges,
+  availableCredits,
+  checkComponent,
+  completeFocus,
+  completeTask,
+  emptyGame,
+  isoDate,
+  reverseCompletion,
+  taskPoints,
+  uncheckComponent,
+  withGame,
+} from "./game";
 
 export { isoDate };
 
@@ -180,6 +192,10 @@ export type Action =
   | { type: "updateTask"; projectId: string; taskId: string; patch: Partial<Task> }
   | { type: "deleteTask"; projectId: string; taskId: string }
   | { type: "setHeavy"; projectId: string; taskId: string; heavy: boolean }
+  | { type: "setTier"; projectId: string; tier: ProjectTier }
+  | { type: "undoComplete"; projectId: string; taskId: string }
+  | { type: "componentChecked"; projectId: string; taskId: string; label: string }
+  | { type: "componentUnchecked"; projectId: string; taskId: string; label: string }
   | { type: "setFirstStep"; projectId: string; taskId: string; firstStep: string }
   | { type: "focusComplete" }
   | { type: "redeemCredit" }
@@ -274,6 +290,39 @@ export function reducer(state: AppState, action: Action): AppState {
         tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, heavy: action.heavy } : t)),
       }));
     }
+    case "setTier":
+      return mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tier: action.tier === "normal" ? undefined : action.tier,
+      }));
+    case "undoComplete": {
+      // The Undo toast's reversal: un-done the task AND claw back its award,
+      // so a hover-click complete on the board is safely reversible.
+      const project = state.projects.find((p) => p.id === action.projectId);
+      const task = project?.tasks.find((t) => t.id === action.taskId);
+      if (!task || !task.done) return state;
+      const next = mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, done: false } : t)),
+      }));
+      return { ...next, game: reverseCompletion(withGame(state.game), task) };
+    }
+    case "componentChecked": {
+      const project = state.projects.find((p) => p.id === action.projectId);
+      const task = project?.tasks.find((t) => t.id === action.taskId);
+      if (!task) return state;
+      const { game, awarded } = checkComponent(withGame(state.game), task, action.label);
+      return {
+        ...state,
+        game: awarded > 0 ? { ...game, lastAward: { points: awarded, at: Date.now() } } : game,
+      };
+    }
+    case "componentUnchecked": {
+      const project = state.projects.find((p) => p.id === action.projectId);
+      const task = project?.tasks.find((t) => t.id === action.taskId);
+      if (!task) return state;
+      return { ...state, game: uncheckComponent(withGame(state.game), task, action.label) };
+    }
     case "chooseFrog": {
       const date = today();
       const sameDay = state.day?.date === date;
@@ -364,7 +413,23 @@ export function reducer(state: AppState, action: Action): AppState {
     case "redeemCredit": {
       const game = withGame(state.game);
       if (availableCredits(game) < 1) return state;
-      return { ...state, game: addBadges({ ...game, creditsRedeemed: game.creditsRedeemed + 1 }, ["maker"]) };
+      const entry = {
+        id: uid("red"),
+        title: "🛠️ Redeemed a Build Credit → a session of building viz-org",
+        points: 0,
+        base: 0,
+        lucky: 0,
+        combo: 0,
+        at: Date.now(),
+        tags: ["Premack: the reward is building"],
+      };
+      return {
+        ...state,
+        game: addBadges(
+          { ...game, creditsRedeemed: game.creditsRedeemed + 1, ledger: [entry, ...(game.ledger ?? [])].slice(0, 200) },
+          ["maker"],
+        ),
+      };
     }
     case "unlockBadge":
       return { ...state, game: addBadges(withGame(state.game), [action.badgeId]) };
@@ -679,6 +744,58 @@ export function assignedToDay(state: AppState, date: string, isToday: boolean): 
     }
   }
   return items;
+}
+
+// --- v3: the Intended/Actual board -----------------------------------------
+
+/** Intended minutes for a project — its capacity read as hours. */
+export function projectAllocMinutes(p: Project): number {
+  return Math.max(0, Math.round(p.capacity * 60));
+}
+
+/** Minutes of completed (claimed) work a project holds. */
+export function projectDoneMinutes(p: Project): number {
+  return p.tasks.reduce((s, t) => s + (t.done ? taskMinutes(t) : 0), 0);
+}
+
+export interface SpotlightPick {
+  project: Project;
+  task: Task;
+}
+
+/**
+ * The one "▶ Start here" suggestion: the most pressing open task with the
+ * lowest activation cost — highest urgency tier first, then the smallest
+ * time estimate inside it (the Kestrel pattern: pressing and tiny wins).
+ */
+export function spotlightPick(state: AppState): SpotlightPick | null {
+  let best: SpotlightPick | null = null;
+  let bestKey: [number, number] | null = null;
+  for (const project of state.projects) {
+    for (const task of project.tasks) {
+      if (task.done) continue;
+      if (task.urgency !== "urgent" && task.urgency !== "high") continue;
+      const key: [number, number] = [URGENCY_RANK[task.urgency], taskMinutes(task)];
+      if (!bestKey || key[0] < bestKey[0] || (key[0] === bestKey[0] && key[1] < bestKey[1])) {
+        best = { project, task };
+        bestKey = key;
+      }
+    }
+  }
+  return best;
+}
+
+/** The seven dates (yyyy-mm-dd) of the current week, Monday first. */
+export function weekDates(): string[] {
+  const now = new Date();
+  const dow = (now.getDay() + 6) % 7; // Monday = 0
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - dow);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return isoDate(d);
+  });
 }
 
 // --- React context -------------------------------------------------------
