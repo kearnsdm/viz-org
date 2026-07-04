@@ -1,5 +1,5 @@
 import { formatDuration, taskMinutes, useStore } from "../store";
-import { headerText } from "./BoardV3";
+import { headerText, InlineHours } from "./BoardV3";
 import { useStreams } from "../streams";
 
 // The v3 project screen — the box, zoomed all the way in. The surface you
@@ -61,6 +61,14 @@ export function ProjectViewV3({
             </div>
           </div>
           <div className="sp" />
+          <span className="tkhours" onClick={(e) => e.stopPropagation()}>
+            intended{" "}
+            <InlineHours
+              capacity={project.capacity}
+              stop
+              onSave={(hours) => dispatch({ type: "setCapacity", projectId, capacity: hours })}
+            />
+          </span>
           <button
             className="btn pri"
             onClick={(e) => {

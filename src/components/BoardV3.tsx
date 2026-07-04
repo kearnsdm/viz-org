@@ -42,6 +42,72 @@ export function initials(name: string): string {
     .toUpperCase();
 }
 
+/**
+ * The intended-hours figure, edited in place — click to type, Enter/blur
+ * saves, Escape cancels. No modal, no edit mode. `capacity` is read as hours
+ * (v3's reading of project.capacity); onSave hands back the new hour count for
+ * the existing setCapacity action. Pass `stop` inside a clickable box so
+ * editing doesn't also open the box.
+ */
+export function InlineHours({
+  capacity,
+  onSave,
+  stop,
+}: {
+  capacity: number;
+  onSave: (hours: number) => void;
+  stop?: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(String(capacity));
+  const halt = (e: { stopPropagation: () => void }) => {
+    if (stop) e.stopPropagation();
+  };
+  const commit = () => {
+    const n = parseFloat(val);
+    if (!Number.isNaN(n) && n > 0) onSave(n);
+    setEditing(false);
+  };
+  if (editing) {
+    return (
+      <input
+        className="hours-edit"
+        type="number"
+        min={1}
+        step={1}
+        value={val}
+        autoFocus
+        onClick={halt}
+        onMouseDown={halt}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            (e.target as HTMLInputElement).blur();
+          } else if (e.key === "Escape") {
+            setVal(String(capacity));
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+  return (
+    <span
+      className="hours-edit-trigger"
+      title="Click to edit intended hours"
+      onClick={(e) => {
+        halt(e);
+        setVal(String(capacity));
+        setEditing(true);
+      }}
+    >
+      {formatDuration(Math.round(capacity * 60)) || "0m"}
+    </span>
+  );
+}
+
 function useMeasure<T extends HTMLElement>() {
   const ref = useRef<T | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -116,7 +182,11 @@ function ProjectBoxV3({
   const header =
     mode === "alloc" ? (
       <span>
-        {formatDuration(alloc) || "0m"}
+        <InlineHours
+          capacity={project.capacity}
+          stop
+          onSave={(hours) => dispatch({ type: "setCapacity", projectId: project.id, capacity: hours })}
+        />
         {over > 0 ? (
           <>
             {" · "}
@@ -217,10 +287,11 @@ function ProjectBoxV3({
 }
 
 export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: BoardV3Props) {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const { ref, size } = useMeasure<HTMLDivElement>();
   const [grpOpen, setGrpOpen] = useState(false);
   const [mode, setMode] = useState<BoardMode>("alloc");
+  const hours = state.weeklyHours ?? 40;
 
   const sizeOf = (p: Project) => (mode === "alloc" ? projectAllocMinutes(p) || projectWorkMinutes(p) : projectWorkMinutes(p));
 
@@ -285,6 +356,23 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
                 overTotal ? ` · ${formatDuration(overTotal)} over plan` : ""
               } · ${formatDuration(done) || "0m"} done`
             : `${formatDuration(booked) || "0m"} remaining · ${formatDuration(done) || "0m"} done`}
+        </span>
+        <span className="sp" />
+        <span className="wbud">
+          weekly budget
+          <button className="wstep" title="−1h" onClick={() => dispatch({ type: "setWeeklyHours", hours: hours - 1 })}>
+            −
+          </button>
+          <input
+            type="number"
+            min={1}
+            value={hours}
+            onChange={(e) => dispatch({ type: "setWeeklyHours", hours: Number(e.target.value) })}
+          />
+          <button className="wstep" title="+1h" onClick={() => dispatch({ type: "setWeeklyHours", hours: hours + 1 })}>
+            +
+          </button>
+          h/wk
         </span>
       </div>
       <div className="rail" style={{ ["--dpc" as string]: `${dpc}%`, ["--bpc" as string]: `${bpc}%` }} />
