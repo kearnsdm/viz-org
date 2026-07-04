@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { isoDate, taskMinutes, useStore } from "../store";
 import { taskPoints, COMPONENT_POINTS } from "../game";
 import { useStreams } from "../streams";
@@ -29,6 +30,7 @@ export function TaskSheet({
 }) {
   const { state, dispatch } = useStore();
   const { streams, dispatch: dispatchStreams } = useStreams();
+  const [holdDate, setHoldDate] = useState("");
 
   const project = state.projects.find((p) => p.id === projectId);
   const task = project?.tasks.find((t) => t.id === taskId);
@@ -110,6 +112,7 @@ export function TaskSheet({
               {project.name} · {taskMinutes(task)}m
               {task.urgency === "urgent" ? " · urgent" : task.urgency === "high" ? " · high" : ""}
               {task.heavy ? " · 🔥" : ""}
+              {task.held ? ` · ⏸ held — returns ${task.scheduledFor ?? "?"}` : ""}
               {task.done ? " · ✓ done" : ` · worth +${taskPoints(task)} ⚡`}
             </div>
           </div>
@@ -223,6 +226,46 @@ export function TaskSheet({
           />{" "}
           🔥 Heavy / aversive — the frog (bonus points)
         </label>
+        {!task.done && (
+          <div className="hold-row">
+            {task.held ? (
+              <>
+                <span className="hold-status">⏸ Held — off the board until {task.scheduledFor ?? "?"}</span>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    dispatch({ type: "releaseTask", projectId, taskId });
+                    notify(`↩ ${task.title} is back on the board`);
+                  }}
+                >
+                  ↩ Return to board now
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="hold-status">⏸ Hold — park it off the board until</span>
+                <input
+                  type="date"
+                  value={holdDate || task.scheduledFor || ""}
+                  onChange={(e) => setHoldDate(e.target.value)}
+                />
+                <button
+                  className="btn"
+                  disabled={!(holdDate || task.scheduledFor)}
+                  title="A hold always needs a return date"
+                  onClick={() => {
+                    const until = holdDate || task.scheduledFor;
+                    if (!until) return;
+                    dispatch({ type: "holdTask", projectId, taskId, until });
+                    notify(`⏸ Held until ${until}`, () => dispatch({ type: "releaseTask", projectId, taskId }));
+                  }}
+                >
+                  ⏸ Hold
+                </button>
+              </>
+            )}
+          </div>
+        )}
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <button className="btn danger" onClick={del}>
             Delete

@@ -17,7 +17,22 @@ import { AnalysisV3 } from "./components/AnalysisV3";
 import { RewardsV3 } from "./components/RewardsV3";
 import { IntakeV3 } from "./components/IntakeV3";
 import { FocusV3 } from "./components/FocusV3";
-import { STORAGE_KEY, StoreContext, decodeCandidates, findTaskItem, loadState, reducer, saveState, uid, useStore } from "./store";
+import {
+  STORAGE_KEY,
+  StoreContext,
+  decodeCandidates,
+  dueHeldItems,
+  findTaskItem,
+  formatDuration,
+  isoDate,
+  loadState,
+  reducer,
+  saveState,
+  taskMinutes,
+  uid,
+  useStore,
+  type PlanItem,
+} from "./store";
 import { StreamsContext, loadStreams, saveStreams, streamsReducer } from "./streams";
 import type { Urgency } from "./types";
 
@@ -292,7 +307,7 @@ const V3_TABS: Array<{ id: V3Tab; label: string }> = [
 ];
 
 function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggleVersion: () => void }) {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const [tab, setTab] = useState<V3Tab>("board");
   const [projectView, setProjectView] = useState<string | null>(null);
   const [sheet, setSheet] = useState<{ projectId: string; taskId: string } | null>(null);
@@ -311,6 +326,28 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 3400);
   }, []);
+
+  // Holding pen resurfacing: when a held task's return date arrives, it comes
+  // back onto the board — and because that means hours reappearing in the big
+  // box, a warning dialog announces exactly what returned. Runs on load and on
+  // any state change (so holds synced in from another device resurface too);
+  // once resurfaceHeld clears the flags there's nothing due, so no loop.
+  const [resurfaced, setResurfaced] = useState<PlanItem[] | null>(null);
+  useEffect(() => {
+    const today = isoDate(new Date());
+    const due = dueHeldItems(state, today);
+    if (due.length) {
+      // Dedupe by task id: StrictMode double-invokes this in dev, and in prod a
+      // render could slip between the append and resurfaceHeld clearing the
+      // flags — either way a task must appear in the warning at most once.
+      setResurfaced((prev) => {
+        const seen = new Set((prev ?? []).map((i) => i.task.id));
+        const add = due.filter((i) => !seen.has(i.task.id));
+        return add.length ? [...(prev ?? []), ...add] : prev;
+      });
+      dispatch({ type: "resurfaceHeld", date: today });
+    }
+  }, [state, dispatch]);
 
   const goTab = (t: V3Tab) => {
     setProjectView(null);
@@ -399,6 +436,49 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
       {focus && <FocusV3 title={focus.title} onClose={() => setFocus(null)} notify={notify} />}
       {addOpen && <AddProjectDialog onClose={() => setAddOpen(false)} />}
       {syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} />}
+      {resurfaced && resurfaced.length > 0 && (
+        <div className="modal3">
+          <div className="dlg">
+            <h3 style={{ margin: "0 0 6px", color: "var(--hi)" }}>↩ Back on the board</h3>
+            <p style={{ fontSize: 12.5, color: "var(--lo)", margin: "0 0 10px" }}>
+              {resurfaced.length === 1 ? "A held task reached its return date" : `${resurfaced.length} held tasks reached their return dates`}{" "}
+              and just resurfaced — <b style={{ color: "var(--mid)" }}>{formatDuration(resurfaced.reduce((s, i) => s + taskMinutes(i.task), 0))}</b>{" "}
+              is back in the big box.
+            </p>
+            {resurfaced.map(({ task, project }) => (
+              <div key={task.id} className="row3">
+                <span style={{ width: 10, height: 10, borderRadius: 3, background: project.color, flex: "none" }} />
+                <label
+                  onClick={() => {
+                    setResurfaced(null);
+                    openTask(project.id, task.id);
+                  }}
+                >
+                  {task.heavy ? "🔥 " : ""}
+                  {task.title}
+                </label>
+                <span className="m">
+                  {project.name} · {formatDuration(taskMinutes(task))} · planned {task.scheduledFor?.slice(5) ?? "today"}
+                </span>
+              </div>
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
+              <button
+                className="btn"
+                onClick={() => {
+                  setResurfaced(null);
+                  goTab("week");
+                }}
+              >
+                Open the Week
+              </button>
+              <button className="btn pri" onClick={() => setResurfaced(null)}>
+                Got it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <BadgeToast />
       <div className={`toast3 ${toast ? "on" : ""}`}>
         {toast?.msg}

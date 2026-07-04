@@ -75,9 +75,11 @@ export function taskMinutes(t: Task): number {
   return t.estimateMinutes && t.estimateMinutes > 0 ? t.estimateMinutes : FALLBACK_TASK_MINUTES;
 }
 
-/** Minutes of open (not done) work a project holds, sizing the board box. */
+/** Minutes of open (not done) work a project holds, sizing the board box.
+ * Held tasks are parked off the board, so they don't count here — the board
+ * shows only live commitments (area = hours stays honest). */
 export function projectWorkMinutes(p: Project): number {
-  return p.tasks.reduce((s, t) => s + (t.done ? 0 : taskMinutes(t)), 0);
+  return p.tasks.reduce((s, t) => s + (t.done || t.held ? 0 : taskMinutes(t)), 0);
 }
 
 /** Total open work minutes across the whole board. */
@@ -193,6 +195,9 @@ export type Action =
   | { type: "deleteTask"; projectId: string; taskId: string }
   | { type: "setHeavy"; projectId: string; taskId: string; heavy: boolean }
   | { type: "setTier"; projectId: string; tier: ProjectTier }
+  | { type: "holdTask"; projectId: string; taskId: string; until: string }
+  | { type: "releaseTask"; projectId: string; taskId: string }
+  | { type: "resurfaceHeld"; date: string }
   | { type: "undoComplete"; projectId: string; taskId: string }
   | { type: "componentChecked"; projectId: string; taskId: string; label: string }
   | { type: "componentUnchecked"; projectId: string; taskId: string; label: string }
@@ -295,6 +300,38 @@ export function reducer(state: AppState, action: Action): AppState {
         ...p,
         tier: action.tier === "normal" ? undefined : action.tier,
       }));
+    case "holdTask": {
+      // Parking requires a date — scheduledFor IS the resurface date, so the
+      // task lands in that day's week column the moment it comes back.
+      if (!action.until) return state;
+      return mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tasks: p.tasks.map((t) =>
+          t.id === action.taskId ? { ...t, held: true, scheduledFor: action.until, snoozeUntil: undefined } : t,
+        ),
+      }));
+    }
+    case "releaseTask":
+      return mapProject(state, action.projectId, (p) => ({
+        ...p,
+        tasks: p.tasks.map((t) => (t.id === action.taskId ? { ...t, held: undefined } : t)),
+      }));
+    case "resurfaceHeld": {
+      // A held task whose return date has arrived comes back onto the board.
+      // The caller (WorkspaceV3) snapshots what's due first, to warn the user.
+      let changed = false;
+      const projects = state.projects.map((p) => ({
+        ...p,
+        tasks: p.tasks.map((t) => {
+          if (t.held && !t.done && t.scheduledFor && t.scheduledFor <= action.date) {
+            changed = true;
+            return { ...t, held: undefined };
+          }
+          return t;
+        }),
+      }));
+      return changed ? { ...state, projects } : state;
+    }
     case "undoComplete": {
       // The Undo toast's reversal: un-done the task AND claw back its award,
       // so a hover-click complete on the board is safely reversible.
@@ -653,7 +690,7 @@ export function buildDailyPlan(state: AppState): PlanItem[] {
   const items: PlanItem[] = [];
   for (const project of state.projects) {
     for (const task of project.tasks) {
-      if (task.done) continue;
+      if (task.done || task.held) continue;
       if (task.scheduledFor && task.scheduledFor > horizon) continue; // planned for a later day
       if (task.snoozeUntil && task.snoozeUntil > horizon) continue; // snoozed out of Today
       const dueSoon = task.due ? task.due <= horizon : false;
@@ -699,7 +736,7 @@ export function tasksForDay(state: AppState, date: string): DayBoxItem[] {
   const items: DayBoxItem[] = [];
   for (const project of state.projects) {
     for (const task of project.tasks) {
-      if (task.done) continue;
+      if (task.done || task.held) continue;
       let reason: DayBoxReason | null = null;
       if (task.scheduledFor === date) reason = "scheduled";
       else if (!task.scheduledFor && task.snoozeUntil === date) reason = "snoozed";
@@ -717,7 +754,7 @@ export function unassignedTasks(state: AppState): PlanItem[] {
   const items: PlanItem[] = [];
   for (const project of state.projects) {
     for (const task of project.tasks) {
-      if (!task.done && !task.scheduledFor) items.push({ task, project });
+      if (!task.done && !task.held && !task.scheduledFor) items.push({ task, project });
     }
   }
   items.sort((a, b) => {
@@ -738,7 +775,7 @@ export function assignedToDay(state: AppState, date: string, isToday: boolean): 
   const items: PlanItem[] = [];
   for (const project of state.projects) {
     for (const task of project.tasks) {
-      if (task.done || !task.scheduledFor) continue;
+      if (task.done || task.held || !task.scheduledFor) continue;
       const hit = isToday ? task.scheduledFor <= date : task.scheduledFor === date;
       if (hit) items.push({ task, project });
     }
@@ -773,7 +810,7 @@ export function spotlightPick(state: AppState): SpotlightPick | null {
   let bestKey: [number, number] | null = null;
   for (const project of state.projects) {
     for (const task of project.tasks) {
-      if (task.done) continue;
+      if (task.done || task.held) continue;
       if (task.urgency !== "urgent" && task.urgency !== "high") continue;
       const key: [number, number] = [URGENCY_RANK[task.urgency], taskMinutes(task)];
       if (!bestKey || key[0] < bestKey[0] || (key[0] === bestKey[0] && key[1] < bestKey[1])) {
@@ -783,6 +820,30 @@ export function spotlightPick(state: AppState): SpotlightPick | null {
     }
   }
   return best;
+}
+
+// --- v3: the Holding pen -----------------------------------------------------
+
+/** Minutes of held (parked) work in a project — sizes the Holding landscape. */
+export function projectHeldMinutes(p: Project): number {
+  return p.tasks.reduce((s, t) => s + (t.held && !t.done ? taskMinutes(t) : 0), 0);
+}
+
+/** All held tasks, soonest return date first. */
+export function heldItems(state: AppState): PlanItem[] {
+  const items: PlanItem[] = [];
+  for (const project of state.projects) {
+    for (const task of project.tasks) {
+      if (task.held && !task.done) items.push({ task, project });
+    }
+  }
+  items.sort((a, b) => (a.task.scheduledFor ?? "9999").localeCompare(b.task.scheduledFor ?? "9999"));
+  return items;
+}
+
+/** Held tasks whose return date has arrived — due to resurface onto the board. */
+export function dueHeldItems(state: AppState, date: string): PlanItem[] {
+  return heldItems(state).filter((i) => i.task.scheduledFor !== undefined && i.task.scheduledFor <= date);
 }
 
 /** The seven dates (yyyy-mm-dd) of the current week, Monday first. */

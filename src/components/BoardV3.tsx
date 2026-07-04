@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import {
   formatDuration,
+  heldItems,
   projectAllocMinutes,
   projectDoneMinutes,
+  projectHeldMinutes,
   projectWorkMinutes,
   spotlightPick,
   taskMinutes,
@@ -19,7 +21,7 @@ import type { Project, Task } from "../types";
 // unfilled bands and overflow lips) and Actual (booked minutes). Hover a
 // stripe to reveal its checkbox (complete with Undo) and chevron (open sheet).
 
-export type BoardMode = "alloc" | "actual";
+export type BoardMode = "alloc" | "actual" | "holding";
 
 /** Header text flips light/dark per hue for legibility. */
 export function headerText(color: string): string {
@@ -293,9 +295,17 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
   const [mode, setMode] = useState<BoardMode>("alloc");
   const hours = state.weeklyHours ?? 40;
 
-  const sizeOf = (p: Project) => (mode === "alloc" ? projectAllocMinutes(p) || projectWorkMinutes(p) : projectWorkMinutes(p));
+  const sizeOf = (p: Project) =>
+    mode === "holding"
+      ? projectHeldMinutes(p)
+      : mode === "alloc"
+        ? projectAllocMinutes(p) || projectWorkMinutes(p)
+        : projectWorkMinutes(p);
 
-  const spot = spotlightPick(state);
+  const spot = mode === "holding" ? null : spotlightPick(state);
+  const held = heldItems(state);
+  const heldMin = held.reduce((s, i) => s + taskMinutes(i.task), 0);
+  const nextReturn = held[0]?.task.scheduledFor;
 
   const entries = state.projects.map((p) => ({ p, v: sizeOf(p) })).filter((e) => e.v > 0);
   const total = entries.reduce((s, e) => s + e.v, 0) || 1;
@@ -304,7 +314,7 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
   let nodes: Array<{ p?: Project; grp?: Array<{ p: Project; v: number }>; v: number; id: string }> = entries.map(
     (e) => ({ p: e.p, v: e.v, id: e.p.id }),
   );
-  if (!grpOpen) {
+  if (!grpOpen && mode !== "holding") {
     const small = entries.filter((e) => e.v / total < OTHER_SHARE);
     if (small.length >= 2) {
       const ids = new Set(small.map((e) => e.p.id));
@@ -349,9 +359,16 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
           <button className={mode === "actual" ? "on" : ""} onClick={() => setMode("actual")}>
             Actual
           </button>
+          <button className={mode === "holding" ? "on" : ""} onClick={() => setMode("holding")}>
+            Holding{held.length ? ` (${held.length})` : ""}
+          </button>
         </div>
         <span>
-          {mode === "alloc"
+          {mode === "holding"
+            ? held.length
+              ? `${held.length} held · ${formatDuration(heldMin)} parked off the board — next return ${nextReturn?.slice(5) ?? "—"}`
+              : "nothing held — park a task from its sheet"
+            : mode === "alloc"
             ? `planned ${formatDuration(allocTotal) || "0m"} · booked ${formatDuration(booked) || "0m"}${
                 overTotal ? ` · ${formatDuration(overTotal)} over plan` : ""
               } · ${formatDuration(done) || "0m"} done`
@@ -375,8 +392,15 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
           h/wk
         </span>
       </div>
-      <div className="rail" style={{ ["--dpc" as string]: `${dpc}%`, ["--bpc" as string]: `${bpc}%` }} />
+      {mode !== "holding" && (
+        <div className="rail" style={{ ["--dpc" as string]: `${dpc}%`, ["--bpc" as string]: `${bpc}%` }} />
+      )}
       <div className="frame" ref={ref}>
+        {mode === "holding" && held.length === 0 && (
+          <div style={{ display: "grid", placeItems: "center", height: "100%", color: "var(--lo)", fontSize: 13 }}>
+            The pen is empty. Open a task's sheet and "⏸ Hold" it — it leaves the board until its return date.
+          </div>
+        )}
         {rects.map((r) => {
           const G = 1;
           const pos = {
@@ -423,6 +447,54 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
             );
           }
           const project = node.p!;
+          if (mode === "holding") {
+            // The Holding landscape: same grammar (hue = category, area =
+            // minutes), but boxes hold parked stripes sorted by return date.
+            const parked = project.tasks
+              .filter((t) => t.held && !t.done)
+              .sort((a, b) => (a.scheduledFor ?? "9999").localeCompare(b.scheduledFor ?? "9999"));
+            const small = (pos.height as number) < 86 || (pos.width as number) < 110;
+            return (
+              <div
+                key={project.id}
+                className={`box ${small ? "sm" : ""}`}
+                style={{ ...pos, ["--c" as string]: project.color, ["--ct" as string]: headerText(project.color) }}
+                onClick={() => onOpenProject(project.id)}
+              >
+                <div className="bh">
+                  <span className="nm" title={project.name}>
+                    {small ? initials(project.name) : project.name}
+                  </span>
+                  <span className="rt">
+                    <span>⏸ {formatDuration(projectHeldMinutes(project))}</span>
+                  </span>
+                </div>
+                <div className="bb">
+                  {parked.map((t) => (
+                    <div
+                      key={t.id}
+                      className="st"
+                      style={{ ["--m" as string]: taskMinutes(t) }}
+                      title={`${t.title} — returns ${t.scheduledFor}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenTask(project.id, t.id);
+                      }}
+                    >
+                      <span className="in">
+                        {t.heavy ? "🔥 " : ""}
+                        {t.title}
+                      </span>
+                      <span className="retn">
+                        {formatDuration(taskMinutes(t))} · ↩ {t.scheduledFor?.slice(5) ?? "—"}
+                      </span>
+                      <span className="chev">›</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          }
           return (
             <ProjectBoxV3
               key={project.id}

@@ -30,6 +30,11 @@ export interface Task {
   /** The day (yyyy-mm-dd) the user has planned to do this — places the task in
    * that day's box on the week strip. Independent of the due date. */
   scheduledFor?: string;
+  /** v3: parked in the Holding pen — real work, but not now. A held task is
+   * off the time board entirely (no hours, no stripe, no Week/Today presence)
+   * until `scheduledFor` arrives, when it auto-resurfaces. A hold always
+   * carries a date: `scheduledFor` IS the resurface date. */
+  held?: boolean;
   createdAt: number;
   /** Where the task came from, e.g. "email", "manual". */
   source?: string;

@@ -2652,6 +2652,43 @@ input[type="checkbox"] {
   opacity: 0.9;
 }
 
+/* ---- v3 Holding pen ---- */
+.v3 .retn {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--warn);
+  font-variant-numeric: tabular-nums;
+  padding-left: 8px;
+  white-space: nowrap;
+}
+.v3 .hold-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 2px 0 12px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line2);
+  border-radius: 8px;
+}
+.v3 .hold-status {
+  font-size: 12.5px;
+  color: var(--mid);
+  flex: 1;
+  min-width: 160px;
+}
+.v3 .hold-row input[type="date"] {
+  background: #101216;
+  border: 1px solid var(--line2);
+  color: var(--mid);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
 /* ---- v3 weekly-budget stepper (board header) ---- */
 .v3 .wbud {
   display: inline-flex;
