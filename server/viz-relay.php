@@ -145,6 +145,7 @@ function readJsonBody(int $maxBytes = 262144): ?array {
 $BOARD = 'viz-org-board.json';
 $INBOX = 'viz-org-inbox.json';
 $STREAMS = 'viz-org-streams.json';
+$ANALYSIS = 'viz-org-analysis.json';
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $action = (string) ($_GET['action'] ?? '');
@@ -172,6 +173,21 @@ if ($method === 'POST' && $action === 'streams') {
   $j = readJsonBody();
   if ($j === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
   $ok = writeGistFile($CFG, $id, $STREAMS, (string) json_encode($j, JSON_PRETTY_PRINT));
+  http_response_code($ok ? 200 : 502);
+  echo json_encode($ok ? ['ok' => true] : ['error' => 'upstream write failed']);
+  exit;
+}
+
+if ($method === 'GET' && $action === 'analysis') {
+  $c = readGistFile($CFG, $id, $ANALYSIS);
+  echo ($c !== null && trim($c) !== '') ? $c : json_encode(['v' => 1, 'kind' => 'viz-org-analysis']);
+  exit;
+}
+
+if ($method === 'POST' && $action === 'analysis') {
+  $j = readJsonBody();
+  if ($j === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
+  $ok = writeGistFile($CFG, $id, $ANALYSIS, (string) json_encode($j, JSON_PRETTY_PRINT));
   http_response_code($ok ? 200 : 502);
   echo json_encode($ok ? ['ok' => true] : ['error' => 'upstream write failed']);
   exit;
