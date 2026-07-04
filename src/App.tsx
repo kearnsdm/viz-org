@@ -392,6 +392,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
             setSheet(null);
             setFocus({ title: sheetTitle });
           }}
+          onMoved={(newProjectId) => setSheet({ projectId: newProjectId, taskId: sheet.taskId })}
           notify={notify}
         />
       )}

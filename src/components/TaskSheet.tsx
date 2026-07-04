@@ -17,12 +17,14 @@ export function TaskSheet({
   taskId,
   onClose,
   onSprint,
+  onMoved,
   notify,
 }: {
   projectId: string;
   taskId: string;
   onClose: () => void;
   onSprint: () => void;
+  onMoved?: (newProjectId: string) => void;
   notify: (msg: string, undo?: () => void) => void;
 }) {
   const { state, dispatch } = useStore();
@@ -31,6 +33,15 @@ export function TaskSheet({
   const project = state.projects.find((p) => p.id === projectId);
   const task = project?.tasks.find((t) => t.id === taskId);
   if (!project || !task) return null;
+
+  const otherProjects = state.projects.filter((p) => p.id !== projectId);
+  const moveToProject = (toProjectId: string) => {
+    if (!toProjectId || toProjectId === projectId) return;
+    dispatch({ type: "moveTask", taskId, fromProjectId: projectId, toProjectId });
+    const dest = state.projects.find((p) => p.id === toProjectId);
+    notify(`Moved to ${dest?.name ?? "project"}`);
+    onMoved?.(toProjectId);
+  };
 
   const stream = streams.find((s) => s.taskId === task.id);
   const comps = stream ? stream.items.filter((i) => i.state !== "dropped") : [];
@@ -169,6 +180,17 @@ export function TaskSheet({
               {DURATIONS.map((d) => (
                 <option key={d} value={d}>
                   {d >= 60 ? `${d / 60}h` : `${d}m`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="fld" style={{ flex: 1, minWidth: 140 }}>
+            Project
+            <select value={projectId} onChange={(e) => moveToProject(e.target.value)}>
+              <option value={projectId}>{project.name}</option>
+              {otherProjects.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
                 </option>
               ))}
             </select>
