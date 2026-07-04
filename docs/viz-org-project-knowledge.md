@@ -1,0 +1,68 @@
+# viz-org — project knowledge
+*Briefing for any Claude chat in this project. Last updated July 1, 2026.*
+
+## What viz-org is
+A personal work-landscape app built by Devin Kearns: the entire work world rendered as a bounded treemap "board of time" — projects as boxes sized by booked hours, tasks as stripes within them, empty space as unbooked time. React + TypeScript + Vite, deployed on GitHub Pages (kearnsdm.github.io/viz-org), repo at github.com/kearnsdm/viz-org. State lives in browser localStorage and syncs across devices through a single private GitHub gist. The app was originally built in Claude Code; chat sessions carry the bridge, workflow, and design work.
+
+## Current state (as of July 1, 2026)
+- **v2 is the live deployed app.** The v3 *data engine* is live in the gist; the v3 *UI* is built as patches, not yet applied or deployed.
+- **The Claude↔viz-org bridge works, both directions, proven live**: Claude reads the board and writes candidates/checklists via the GitHub gist API from the chat container.
+- **Gist id:** `a8ada37ee061093bd8715faf9f5580a0`. Files: `viz-org-board.json` (full board, source of truth for task done-states), `viz-org-inbox.json` (CandidateTask[] drop box; app drains on load/focus/"Check for new tasks", dedupes by id), `viz-org-streams.json` (v3 checklists — created July 1).
+- **Live streams:** 🖋️ *Frontiers syllable ms* (codename **Heron**, Writing & Papers, bound to task_m43el979a4, 6 items) and ⏱️ *Office Hours deck — 10-min pass* (codename **Kestrel**, NYC MTSS, 3/3 done).
+- **Token:** classic GitHub PAT, `gist` scope only, **expires Jul 11 2026** — everything stops then unless regenerated. Lives in browser localStorage key `viz-org-sync-v2` per connected device; pasted once per chat session for bridge work; never stored in Claude memory. The relay (below) will move it server-side.
+- **Known bug (headline v2 cleanup item):** sync is whole-file last-write-wins — two live devices clobber each other (ate a task July 1; recovered by re-injection). Interim rule: work one device at a time, Sync now before switching.
+
+## Architecture facts a future chat needs
+- **CandidateTask shape** (inbox items): `{ id, title, from, urgency: low|normal|high|urgent, due?, estimateMinutes?, suggestedProjectId?, link?, notes? }`. Fresh id ⇒ re-ingested (board tracks `seenCandidateIds`).
+- **Stream schema (v3, stamped v:3):** `{ streamId, taskId|null (null = orphan/unbound), name, aliases[], codename, category, glyph, tintIndex, items[{id,text,state:open|done|dropped,addedAt,closedAt?}], history[append-only events], createdAt, updatedAt }`. Replan folds removed open items to `dropped` — history is never destroyed. Users refer to streams by name/alias/codename, never ids; collisions are surfaced, not guessed.
+- **Bridge ops:** GET gist → parse board/streams; PATCH `viz-org-inbox.json` to push candidates; PATCH `viz-org-streams.json` for checklist updates. GitHub API headers: Bearer token, `application/vnd.github+json`, api-version `2022-11-28`, a User-Agent.
+- **Sync provider:** `src/sync.ts` (gist) + legacy `server/viz-sync.php` passphrase endpoint (DreamHost, fallback only).
+
+## Design decisions — LOCKED (July 1 session)
+- **Geometry:** area = hours, always; one stable frame (the week); no lens/toggle geometries. Near-zero gaps between boxes (1px hairline seams — the frame reads as one continuous field, not cards) and small corner radius (~4px). Two levels: project box = its hours; task stripe height = its minutes, with a minimum stripe height for legibility (accepted distortion). Sticky placement is the goal — layout should key on stored order, not resort by size each sync.
+- **Board ↔ Week = one zoomable surface**, not a merged screen: same tiles, colors, and visual grammar; the board is the landscape zoomed out, the Week is the near slice zoomed in; one gesture moves between them (map-app zoom, not app-switch).
+- **Interaction rules (July 2):** the surface you entered through is the exit — clicking the task-screen header or the app logo returns to the board. Clicking a task row opens an **Action Box** (its components/stream steps as checkboxes, Mark done, Sprint on this, Edit details) — the edit form is one action inside it, not the click target; checking the last component completes the task. Sub-scale boxes render two-letter initials beside their hours. The smallest categories (<~5% of board or ≤45m) group into an expandable **"Other"** box: color-square strip in its header, subway-style lettered circle per contained category, tap header to expand, regroup link to collapse. The focus button reads "▶ Just start" (opens the 10/15/25 sprint picker); sprints pay +8 only on completion. **Ranks proposal (draft, Devin to ratify):** levels advance on points + demonstrated practice (frogs, sprints, builds redeemed), named ladder (… Cartographer → Frogkeeper → Landscape Architect), perks are expressive only (glyph packs, themes, codename banks) — ranks never decay, perks never gate function.
+- **Task Sheet ruling (July 2, UX):** one surface per task, everywhere — the Action Box/Edit form split is dead. The sheet leads with a large completion checkbox + inline-editable title, then the Claude-imported checklist (with light provenance), then details edited in place (no edit mode, no Save button), ▶ Sprint in the header, Delete at the bottom. Board stripes show hover affordance: row brightens, a checkbox and › chevron reveal, ▤ n/m badge marks tasks with components. Completing from the board is one hover-click guarded by an **Undo toast** (undo beats confirmation). Same sheet opens from every surface — stripe, week chip, Other-row, project list, archive; on touch, tap opens the sheet and the checkbox lives there.
+- **Analysis tab ruling (July 2):** divergence flags come off the board entirely — the board is a glance surface; diagnosis is deliberate. A final **Analysis** tab holds the findings: "If you do one thing" at top, then plan-vs-actual cards (overflow / unfilled intention), pattern cards (hours on dimmed work, open frogs while small items clear, oldest urgent fire), each with evidence, why-it-matters, and action buttons (Open project / Sprint on it). In the live build, Claude authors this via the bridge — reads board + stream history from the gist, writes findings to **viz-org-analysis.json**, the tab renders it; this is the landing surface for the recurring work-analysis ritual.
+- **Reinforcement contract (July 2, ratified):** frog toll — a 🔥 task 3+ days unsprinted means building sessions open with a 10-min sprint on the oldest frog (waivable, waivers logged); installment-scale builds cost 1 Build Credit. Components pay +2 per check (capped at task value); first sprint of the day pays double; oldest-frog sprints +8; frogs stale >72h trigger a proactive Kestrel-style micro-stream offer. Feedback descriptive only; no decay/streak-loss/punishment. Weekly measures: frogs/wk, sprints/wk, initiation latency — schedules adjusted empirically. Task Sheets show payout before work ("worth +45 ⚡").
+- **Week ruling (July 2):** day columns hold **individual tasks**, not blocks — the intended-vs-actual pattern rotated into days. Each day has a dashed capacity line; pulled tasks stack at true height and, past the line, render in the red hatch while the column keeps extending, labeled "+Xm over — not possible as planned." Unplaced open tasks sit in an **unplanned pool under the week** with one-tap day buttons; placement is the user's choice regardless of due date — the due date is only a flag (OVERDUE in red). ✕ on a chip returns it to the pool; chips open the Task Sheet. Urgency marks and the Start-here spotlight stay on the board and lists; only divergence flags moved to Analysis.
+- **Color:** neutral desaturated-slate canvas (not navy). Category hue flows through the **entire box** as a dark, low-saturation tint (~20% mix), anchored by a **solid saturated header bar** carrying the project name + hours. Header text color flips light/dark per hue for legibility. Confusable hues spaced (ESJ cyan-teal ≠ Consulting leaf-green; indigo ≠ purple).
+- **Channel discipline (one job per channel):** hue = category; translucency = depth only; **red/amber = urgency exclusively** (badge pill HIGH/SOON + red-tinted row + thin red left edge on the urgent task only); **green = done exclusively** (✓ prefix); luminance = priority.
+- **Priority = luminance, three tiers** (elevated / normal / dimmed), exceptions-only marking (default normal — no grading every project). Dimmed lowers body tint + secondary text, never below a legible floor.
+- **Progress is geometric:** a done task keeps its proportional stripe, rendered *claimed* (filled, ✓, struck); header carries a thin progress bar computed from task minutes; the week rail opens with a light "done" segment. Gain-framed; never punitive; no streak-shame mechanics.
+- **Attention layer:** one **"▶ Start here"** spotlight — suggested next action chosen by urgency × lowest activation cost (the Kestrel pattern). **Auto divergence flags**, quiet gray-blue chips, max two on screen: "⚖ time-sink?" (big + dim), "◔ underweighted?" (bright + small/stale).
+- **Recall ("parking garage"):** color always = category; per-stream memorability via glyph + codename (+ tintIndex within the hue). Auto-assigned at creation; override via a searchable, scrollable **emoji** picker (iPhone-style).
+- **Rename:** "Email Intake" → **"Intake"** (it now holds jotted items, not just email). Intake is a triage pen: every candidate is processed — edit + assign to a box, or delete. Nothing skips triage.
+
+## Standing procedures
+- **Capture trigger:** natural phrasing "add X to viz-org" (any surface) → Claude pushes an unprocessed candidate to the gist inbox (with suggestedProjectId if inferable) → lands in Intake on next app sync. Not auto-filed.
+- **Checklist flow:** discussion → Claude writes/updates a stream in the gist; user reports completions in chat ("checked off Heron's first two") → Claude updates state; replans preserve history.
+- **Micro-streams for activation:** when depleted, shrink the task — a 2–4 step stream whose first item is a physical action ("open the deck"), 10-minute timer framing, partial completion counts.
+- **Session model:** Claude acts per turn only (no background). "Pull viz-org" = read current gist state before proceeding.
+- **Reference files:** `viz-org-v3-design-and-runbook.md` (full spec), `email-task-sweep.md` (sweep procedure; trigger "run the email sweep").
+
+## Build queue (v3 completion)
+1. **Installment 4 — the visible layer** (to write next, against real components): StreamChip (hue + tint + glyph + codename), searchable emoji IconPicker, Intake rename, Unbound tray, board redesign per the locked decisions above, mount StreamsProvider + wire pullStreams/pushStreams, auto-bind on task create/file.
+2. **Relay deploy** on DreamHost: `server/viz-relay.php` + gitignored `viz-relay-config.php` (holds PAT + low-stakes relay key). Actions: GET board, GET/POST streams, POST append. Then the token leaves chat entirely; set `gistId` in config; commit only the relay URL to CLAUDE.md, never the key.
+3. **CLAUDE.md** committed to the repo — cross-surface procedure file (chat, Cowork, Code all read the same instructions).
+
+### Patches built, verified, awaiting apply (git apply at the machine)
+- `viz-org-v3-installment-1.patch` — Stream types + pullStreams/pushStreams (tsc clean).
+- `viz-org-v3-installment-2-relay.patch` — relay + sample config + .gitignore (php -l clean).
+- `viz-org-v3-installment-3-streams-engine.patch` — `src/streams.ts`: reducer, resolution, LWW merge, persistence, context (tsc clean; 17/17 behavioral tests).
+
+### Design mockups (HTML, open in browser)
+`viz-org-board-recolor.html` (header-only — superseded) · `viz-org-board-recolor-v2.html` (full-tint toggle) · `viz-org-geometry-lenses.html` (lens switcher — rejected, kept for reference) · `viz-org-synthesis-map.html` / `-v2.html` (**the decided direction**, v2 = task stripes).
+
+## v-next list (parked, in rough priority)
+1. **Sync merge fix** — field-level or per-file merge to kill the last-write-wins clobber. Do before the system carries more weight.
+2. **Delegation / assignee layer (v4):** Assignee entity (people + Claude + self) with capacity; assignment states (mine/assigned/waiting-on/blocked/returned/done); waiting-on view grouped by person + staleness; nudge drafting; **Claude-assignment ledger first** (a gist file; proves the model with a delegatee who reports its own status).
+3. **Work-analysis ritual:** recurring board review with Claude — load vs. capacity per area/assignee, gaps, reallocation as a recorded action; each review saved.
+4. **In-app Claude chat** via a relay chat action + slim drawer (API-key server-side; separate instance — no chat memory/connectors; quick board ops only).
+5. **Calendar events as board items** (calendar never flows in today — a repeated surprise).
+6. **Approach lane** — inbound/future work visible at the frame's edge (future-crunch visibility).
+7. **Reinforcement extensions:** closure rituals, stalled-item "ready to resume" resurfacing, opt-in non-punitive cadence; v2 reinforcement ledger extension.
+8. **Intake auto-routing suggestions** (confidence-based pre-fill; flag only genuine ambiguity — fires rarely or not at all).
+
+## People and context that recur
+Meghan Duffy (NYC MTSS, office-hours deck), the NYC MTSS team (Wed office hours), Frontiers syllable manuscript (= Heron), IDA/Annals editorial work, NC State projects. Devin's work email splits across NC State Gmail and Outlook — search both. Google Drive connector is read-only at the API level for this account: skip Drive writes, deliver via local outputs.

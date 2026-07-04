@@ -32,6 +32,14 @@ URL: `https://www.devinkearns.com/viz/viz-relay.php` (the bare domain 301s to ww
 - **Feedback:** descriptive only — counts, firsts, trends. Never praise. No decay, streak-loss, or punishment mechanics, ever.
 - **Enforcement tone:** state the toll or charge plainly, run it or log the waiver, proceed.
 
+## The v3 UI — DECIDED. Do not redesign.
+The v3 visual and interaction design is complete and ratified. It is specified in this repo:
+- **docs/v3-ui-spec.html** — a clickable, working spec of every surface. Open it; it is the source of truth for installment 4.
+- **docs/viz-org-project-knowledge.md** — every locked design ruling (color system, geometry, Task Sheet, Week, Analysis tab, reward economy, contract).
+- **docs/glossary.html** — the shared vocabulary with visuals.
+
+Installment 4 = implement that spec in the React app: Intended/Actual board (full-tint boxes, saturated headers, remaining bands, overflow lips, luminance tiers, Start-here spotlight, "Other" group, hover-reveal checkboxes with Undo), the Week (day columns with capacity lines, past-the-line overflow, drag from an unplanned pool), the unified Task Sheet (checklist-first, edit-in-place, Sprint in header), Archive, the Analysis tab, and the reward loop (component points, first-sprint-double, worth-preview, Ranks draft). Never propose "fresh design directions" — propose changes to the spec as explicit changes, and only with Devin's sign-off.
+
 ## Working style
 - Code ships as reviewable patches, built and type-checked (`npm run lint` = `tsc --noEmit`) against a clean tree; Devin applies and pushes.
 - Design decisions are locked in `viz-org-project-knowledge.md` (project knowledge / repo docs); propose changes as changes — never silently deviate. Channel discipline: area = hours always; hue = category; red/amber = urgency only; green = done only; luminance = priority.
