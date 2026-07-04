@@ -43,6 +43,27 @@ export function saveSyncConfig(cfg: SyncConfig | null): void {
   }
 }
 
+/**
+ * GitHub meters gist *writes* (resource `gist_update`) in a separate, much
+ * smaller per-user bucket than reads (`core`). Under the whole-file
+ * last-write-wins sync, a burst of saves can exhaust it — then every PATCH
+ * 403s while GETs keep working. This is a rate limit, NOT a bad/scopeless
+ * token, so it's surfaced distinctly and callers must NOT retry it (retrying
+ * only digs the hole deeper and keeps the bucket pinned at zero).
+ */
+export class GistRateLimitError extends Error {
+  readonly resource?: string;
+  /** Epoch seconds when the bucket refills, if GitHub reported it. */
+  readonly resetAt?: number;
+  constructor(resource?: string, resetAt?: number) {
+    const when = resetAt ? ` — resets around ${new Date(resetAt * 1000).toLocaleTimeString()}` : "";
+    super(`GitHub write rate limit reached${resource ? ` (${resource})` : ""}${when}. Reads still work; writes pause until it refills.`);
+    this.name = "GistRateLimitError";
+    this.resource = resource;
+    this.resetAt = resetAt;
+  }
+}
+
 async function gh(path: string, token: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(`https://api.github.com${path}`, {
     ...init,
@@ -54,7 +75,15 @@ async function gh(path: string, token: string, init?: RequestInit): Promise<Resp
     },
   });
   if (res.status === 401) throw new Error("GitHub didn't accept that token (401)");
-  if (res.status === 403) throw new Error("GitHub rate limit or token missing 'gist' scope (403)");
+  if (res.status === 403 || res.status === 429) {
+    const remaining = res.headers.get("x-ratelimit-remaining");
+    const resource = res.headers.get("x-ratelimit-resource") ?? undefined;
+    const reset = Number(res.headers.get("x-ratelimit-reset")) || undefined;
+    // A 0-remaining 403 (or any 429) is a rate limit; a 403 with quota left is a
+    // real permission/scope problem.
+    if (res.status === 429 || remaining === "0") throw new GistRateLimitError(resource, reset);
+    throw new Error("GitHub denied the request — the token may be missing the 'gist' scope (403)");
+  }
   if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
   return res;
 }
@@ -137,6 +166,7 @@ export async function pullRemoteRetrying(cfg: SyncConfig, attempts = 3): Promise
     try {
       return await pullRemote(cfg);
     } catch (e) {
+      if (e instanceof GistRateLimitError) throw e; // never retry a rate limit
       lastErr = e;
       await delay(400 * (i + 1));
     }
@@ -150,6 +180,9 @@ export async function pushRemoteRetrying(cfg: SyncConfig, state: AppState, attem
     try {
       return await pushRemote(cfg, state);
     } catch (e) {
+      // A rate-limited write must not be retried — each attempt burns more of
+      // the exhausted gist_update budget and keeps it pinned at zero.
+      if (e instanceof GistRateLimitError) throw e;
       lastErr = e;
       await delay(400 * (i + 1));
     }

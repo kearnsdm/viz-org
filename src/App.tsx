@@ -24,6 +24,7 @@ import type { Urgency } from "./types";
 const UI_VERSION_KEY = "viz-org-ui";
 import { RANKS, availableCredits, badgeById, level, rankIndex, withGame } from "./game";
 import {
+  GistRateLimitError,
   SyncContext,
   clearInbox,
   findOrCreateGist,
@@ -429,6 +430,16 @@ export function App() {
   const latestStreams = useRef(streams);
   latestStreams.current = streams;
 
+  // When a gist write hits GitHub's per-user gist_update rate limit, pause ALL
+  // writers (board + streams) until the bucket refills — otherwise every change
+  // keeps firing PATCHes that just re-pin the limit at zero. Epoch ms; 0 = open.
+  const writesPausedUntil = useRef(0);
+  const noteRateLimit = (e: unknown) => {
+    if (e instanceof GistRateLimitError) {
+      writesPausedUntil.current = (e.resetAt ?? Math.floor(Date.now() / 1000) + 60) * 1000;
+    }
+  };
+
   // Persist locally on every change.
   useEffect(() => {
     saveState(state);
@@ -463,7 +474,8 @@ export function App() {
   useEffect(() => {
     if (!config || !streamsHydrated.current) return;
     const id = setTimeout(() => {
-      pushStreams(config, latestStreams.current).catch(() => {});
+      if (Date.now() < writesPausedUntil.current) return; // rate-limit backoff
+      pushStreams(config, latestStreams.current).catch(noteRateLimit);
     }, 1200);
     return () => clearTimeout(id);
   }, [streams, config]);
@@ -554,10 +566,14 @@ export function App() {
 
   const pushNow = useCallback(() => {
     if (!config) return;
+    if (Date.now() < writesPausedUntil.current) return; // paused until rate limit refills
     setStatus({ phase: "syncing" });
     pushRemoteRetrying(config, latest.current)
       .then(() => setStatus({ phase: "ok", at: Date.now() }))
-      .catch((e) => setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" }));
+      .catch((e) => {
+        noteRateLimit(e);
+        setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" });
+      });
   }, [config]);
 
   // Push changes up (debounced) once the initial pull has settled.
