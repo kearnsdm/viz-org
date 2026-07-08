@@ -1773,17 +1773,17 @@ input[type="checkbox"] {
 }
 .v3 .box {
   position: absolute;
-  border-radius: 4px;
+  border-radius: 5px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   cursor: pointer;
   background: color-mix(in srgb, var(--c) 19%, #14161a);
-  /* A thick boundary in a dark shade of the box's own hue, so adjacent
-   * sections of similar color still read as distinct — the seam carries the
-   * category, not a neutral gray. */
-  border: 2.5px solid color-mix(in srgb, var(--c) 42%, #04060b);
-  outline: 1px solid rgba(0, 0, 0, 0.6);
+  /* A crisp, *bright* edge in the box's own hue — read against the wide dark
+   * gutter it clearly delimits each section, and still carries the category
+   * (hue = category). Bright edge + dark gutter separates without clutter. */
+  border: 3px solid color-mix(in srgb, var(--c) 68%, #0a0d13);
+  outline: 1px solid rgba(0, 0, 0, 0.65);
 }
 .v3 .box.elev {
   background: color-mix(in srgb, var(--c) 27%, #16181d);

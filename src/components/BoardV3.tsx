@@ -418,7 +418,10 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
           </div>
         )}
         {rects.map((r) => {
-          const G = 1;
+          // Gutter half-width: boxes inset by G on each side, so adjacent tiles
+          // are separated by 2·G of dark frame — the strongest, least-cluttered
+          // section separator.
+          const G = 3;
           const pos = {
             left: r.x + G,
             top: r.y + G,

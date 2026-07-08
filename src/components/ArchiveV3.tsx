@@ -55,7 +55,7 @@ export function ArchiveV3({ onOpenProject }: { onOpenProject: (projectId: string
           const entry = entries.find((e) => e.p.id === r.id);
           if (!entry) return null;
           const { p, v } = entry;
-          const G = 1;
+          const G = 3;
           const pos = { left: r.x + G, top: r.y + G, width: Math.max(0, r.w - 2 * G), height: Math.max(0, r.h - 2 * G) };
           const small = pos.height < 86 || pos.width < 110;
           const done = p.tasks.filter((t) => t.done);
