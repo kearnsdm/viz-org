@@ -1,5 +1,6 @@
 import { createContext, useContext } from "react";
 import type { AnalysisDoc, AppState, Stream } from "./types";
+import type { ReinforcementState } from "./reinforcement";
 
 // Cross-device sync via a private GitHub Gist. GitHub's API sends proper CORS
 // headers, so this connects reliably from the app's origin — no self-hosted
@@ -238,6 +239,60 @@ export async function pushStreams(cfg: SyncConfig, streams: Stream[]): Promise<v
   await gh(`/gists/${cfg.gistId}`, cfg.token, {
     method: "PATCH",
     body: JSON.stringify({ files: { [STREAMS_FILE]: { content: serializeStreams(streams) } } }),
+  });
+}
+
+// --- v3: the reinforcement layer (points, level, events, badges) -------------
+// viz-org-reinforcement.json is app-owned read/write. The events array is
+// append-only, so pulls must NEVER adopt-replace — the caller union-merges by
+// event id (mergeReinforcement). Chat sessions may append events (e.g. weekly
+// reviews) through the relay's ?action=reinforcement.
+
+const REINF_FILE = "viz-org-reinforcement.json";
+
+function serializeReinforcement(rs: ReinforcementState): string {
+  return JSON.stringify(rs, null, 2);
+}
+
+/** Fetch the remote reinforcement state, or null if absent/empty/unreadable. */
+export async function pullReinforcement(cfg: SyncConfig): Promise<ReinforcementState | null> {
+  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
+  const file = gist.files?.[REINF_FILE];
+  if (!file) return null;
+  let content: string = file.content ?? "";
+  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
+  if (!content.trim()) return null;
+  try {
+    const parsed = JSON.parse(content);
+    if (parsed && parsed.v === 1 && Array.isArray(parsed.events)) return parsed as ReinforcementState;
+  } catch {
+    /* unreadable remote — treat as absent, never clobber local */
+  }
+  return null;
+}
+
+// --- coalesced multi-file push ------------------------------------------------
+// One user action can dirty up to three gist files (board done-flag, stream
+// item state, reinforcement event). GitHub meters gist writes in a small
+// per-user bucket (see GistRateLimitError), and a gist PATCH can carry many
+// files — so all dirty files ship in ONE request. This both triples the
+// write budget's mileage and makes stream-state/event pairs atomic.
+
+export interface DirtyFiles {
+  board?: AppState;
+  streams?: Stream[];
+  reinforcement?: ReinforcementState;
+}
+
+export async function pushFiles(cfg: SyncConfig, dirty: DirtyFiles): Promise<void> {
+  const files: Record<string, { content: string }> = {};
+  if (dirty.board) files[GIST_FILE] = { content: serialize(dirty.board) };
+  if (dirty.streams) files[STREAMS_FILE] = { content: serializeStreams(dirty.streams) };
+  if (dirty.reinforcement) files[REINF_FILE] = { content: serializeReinforcement(dirty.reinforcement) };
+  if (!Object.keys(files).length) return;
+  await gh(`/gists/${cfg.gistId}`, cfg.token, {
+    method: "PATCH",
+    body: JSON.stringify({ files }),
   });
 }
 

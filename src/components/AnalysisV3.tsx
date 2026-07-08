@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useStore } from "../store";
 import { pullAnalysis, useSync } from "../sync";
+import { isoDate } from "../game";
+import { effectiveEvents, useReinforcement } from "../reinforcement";
 import type { AnalysisDoc, AnalysisFinding } from "../types";
 
 // The v3 Analysis tab — where divergence flags live now (never on the board;
@@ -18,8 +20,23 @@ export function AnalysisV3({
 }) {
   const { state } = useStore();
   const { config } = useSync();
+  const { rs, dispatchR } = useReinforcement();
   const [doc, setDoc] = useState<AnalysisDoc | null>(null);
   const [phase, setPhase] = useState<"loading" | "ready" | "error" | "offline">("loading");
+
+  // The weekly review is a practice gate for leveling; this tab is the
+  // ritual's landing surface, so logging it lives here. One per week.
+  const thisWeek = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return isoDate(d);
+  })();
+  const reviewedThisWeek = effectiveEvents(rs.events).some((e) => {
+    if (e.kind !== "review") return false;
+    const d = new Date(e.at);
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return isoDate(d) === thisWeek;
+  });
 
   const refresh = useCallback(() => {
     if (!config) {
@@ -125,6 +142,23 @@ export function AnalysisV3({
             </div>
           </div>
         )}
+        <div className="card3">
+          <h4>Weekly review</h4>
+          <div style={{ fontSize: 12.5, color: "var(--lo)", lineHeight: 1.6 }}>
+            {reviewedThisWeek
+              ? "Logged for this week — it counts toward your next rank."
+              : "Read the findings, adjust the board, then log it — one review per level is part of ranking up."}
+            {"  "}
+            <button
+              className="btn"
+              style={{ marginLeft: 6 }}
+              disabled={reviewedThisWeek}
+              onClick={() => dispatchR({ type: "review" })}
+            >
+              {reviewedThisWeek ? "✓ Reviewed" : "Log weekly review"}
+            </button>
+          </div>
+        </div>
         <div className="card3" style={{ borderStyle: "dashed" }}>
           <h4>How this works</h4>
           <div style={{ fontSize: 12, color: "var(--lo)", lineHeight: 1.6 }}>

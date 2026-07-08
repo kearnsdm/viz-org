@@ -1,7 +1,16 @@
 import { useState } from "react";
 import { isoDate, taskMinutes, useStore } from "../store";
-import { taskPoints, COMPONENT_POINTS } from "../game";
 import { useStreams } from "../streams";
+import {
+  closePaid,
+  closePayFor,
+  nextStepPay,
+  paySplit,
+  pointsAreOnlyGate,
+  pointsToGo,
+  taskWorth,
+  useReinforcement,
+} from "../reinforcement";
 import type { Task, Urgency } from "../types";
 
 // The unified Task Sheet — ONE surface per task, opened from every surface
@@ -30,6 +39,7 @@ export function TaskSheet({
 }) {
   const { state, dispatch } = useStore();
   const { streams, dispatch: dispatchStreams } = useStreams();
+  const { rs, dispatchR } = useReinforcement();
   const [holdDate, setHoldDate] = useState("");
 
   const project = state.projects.find((p) => p.id === projectId);
@@ -52,13 +62,20 @@ export function TaskSheet({
   const patch = (p: Partial<Task>) => dispatch({ type: "updateTask", projectId, taskId, patch: p });
 
   const complete = () => {
+    const closePay = closePaid(rs.events, task.id) ? 0 : closePayFor(task, stream, rs.events);
     dispatch({ type: "toggleTask", projectId, taskId });
-    notify(`✓ ${task.title}`, () => dispatch({ type: "undoComplete", projectId, taskId }));
+    dispatchR({ type: "close", task, stream });
+    notify(`✓ ${task.title}${closePay > 0 ? ` · +${closePay} ⚡` : ""}`, () => {
+      dispatch({ type: "undoComplete", projectId, taskId });
+      dispatchR({ type: "unclose", task });
+    });
   };
 
   const toggleDone = () => {
-    if (task.done) dispatch({ type: "undoComplete", projectId, taskId });
-    else complete();
+    if (task.done) {
+      dispatch({ type: "undoComplete", projectId, taskId });
+      dispatchR({ type: "unclose", task });
+    } else complete();
   };
 
   const toggleComp = (itemId: string, text: string, isDone: boolean) => {
@@ -66,12 +83,19 @@ export function TaskSheet({
     if (isDone) {
       dispatchStreams({ type: "uncheck", streamId: stream.streamId, itemId });
       dispatch({ type: "componentUnchecked", projectId, taskId, label: text });
+      dispatchR({ type: "unstep", task, itemId });
       return;
     }
+    const pay = nextStepPay(task, stream, rs.events);
     dispatchStreams({ type: "check", streamId: stream.streamId, itemId });
     dispatch({ type: "componentChecked", projectId, taskId, label: text });
+    dispatchR({ type: "step", task, stream, itemId });
     const remainingOpen = comps.filter((i) => i.state === "open" && i.id !== itemId).length;
-    notify(`+${COMPONENT_POINTS} ⚡ · ${compsDone + 1} of ${comps.length} steps done`);
+    notify(
+      pay > 0
+        ? `+${pay} ⚡ · ${compsDone + 1} of ${comps.length} steps done`
+        : `✓ step · ${compsDone + 1} of ${comps.length} done`,
+    );
     // Checking the last open component completes the task itself.
     if (remainingOpen === 0 && !task.done) complete();
   };
@@ -113,7 +137,23 @@ export function TaskSheet({
               {task.urgency === "urgent" ? " · urgent" : task.urgency === "high" ? " · high" : ""}
               {task.heavy ? " · 🔥" : ""}
               {task.held ? ` · ⏸ held — returns ${task.scheduledFor ?? "?"}` : ""}
-              {task.done ? " · ✓ done" : ` · worth +${taskPoints(task)} ⚡`}
+              {task.done ? (
+                " · ✓ done"
+              ) : (
+                <>
+                  {" · "}
+                  {(() => {
+                    // Canonical payout line (spec §4): the level-cross variant
+                    // only when points are genuinely the last gate.
+                    const w = taskWorth(task);
+                    const toGo = pointsToGo(rs);
+                    if (w >= toGo && toGo > 0 && pointsAreOnlyGate(rs))
+                      return `Worth up to +${w} ⚡ — enough to reach ${rs.level.next}`;
+                    const sp = paySplit(task, stream);
+                    return sp.n > 0 ? `Worth up to +${w} ⚡ · each step pays +${sp.perStep}` : `Worth up to +${w} ⚡`;
+                  })()}
+                </>
+              )}
             </div>
           </div>
           <button
@@ -146,6 +186,13 @@ export function TaskSheet({
               </div>
             ))}
           </>
+        )}
+
+        {!task.done && !stream && (task.estimateMinutes ?? 0) > 60 && (
+          <div className="nudge">
+            Big task, no steps yet — want to break it down?{" "}
+            <span className="nudge-how">Ask Claude in chat to start a stream for it; each step then pays as you go.</span>
+          </div>
         )}
 
         <div className="sec">Details — edit in place, saves as you go</div>

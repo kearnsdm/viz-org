@@ -14,11 +14,21 @@
  *
  * Actions (all require the relay key via the X-Viz-Key header, preferred, or
  * a ?key= query param — the header keeps the key out of server access logs):
- *   GET  ?action=board     -> current board JSON ({v,state,savedAt}) or {state:null}
- *   GET  ?action=streams   -> current checklist streams JSON or {v:3,streams:[]}
- *   POST ?action=streams   -> replace streams file with the posted JSON body
- *   POST ?action=append    -> body {candidates:[CandidateTask,...]}; merges into
- *                             the inbox drop box, deduped by id
+ *   GET  ?action=board         -> current board JSON ({v,state,savedAt}) or {state:null}
+ *   GET  ?action=streams       -> current checklist streams JSON or {v:3,streams:[]}
+ *   POST ?action=streams       -> replace streams file with the posted JSON body
+ *   GET  ?action=analysis      -> the contract-ledger / findings file
+ *   POST ?action=analysis      -> replace the analysis file (chat-authored)
+ *   GET  ?action=reinforcement -> the reinforcement layer's state (points,
+ *                                 level, events, badges)
+ *   POST ?action=reinforcement -> replace the reinforcement file. NOTE: the
+ *                                 app merges by event id; sessions should GET,
+ *                                 append their events, and POST the union.
+ *   POST ?action=append        -> body {candidates:[CandidateTask,...]}; merges
+ *                                 into the inbox drop box, deduped by id
+ *
+ * Whole-file POSTs store the posted body VERBATIM after validating it parses
+ * as JSON — decoding/re-encoding in PHP would corrupt empty objects ({}→[]).
  *
  * SETUP is documented at the bottom of this file and in server/README.md.
  */
@@ -141,11 +151,29 @@ function readJsonBody(int $maxBytes = 262144): ?array {
   return is_array($j) ? $j : null;
 }
 
+/**
+ * For whole-file replace actions: validate that the body is JSON, then return
+ * the RAW body to store verbatim. Decoding and re-encoding through PHP would
+ * corrupt empty objects ({} becomes []) — fatal for maps like the
+ * reinforcement badges — and \u-escape multibyte text.
+ */
+function readRawJsonBody(int $maxBytes = 262144): ?string {
+  $raw = file_get_contents('php://input');
+  if ($raw === false || $raw === '' || strlen($raw) > $maxBytes) return null;
+  json_decode($raw);
+  return json_last_error() === JSON_ERROR_NONE ? $raw : null;
+}
+
 // --- dispatch ---------------------------------------------------------------
 $BOARD = 'viz-org-board.json';
 $INBOX = 'viz-org-inbox.json';
 $STREAMS = 'viz-org-streams.json';
 $ANALYSIS = 'viz-org-analysis.json';
+$REINF = 'viz-org-reinforcement.json';
+
+// Keep multibyte text (em-dashes, emoji glyphs) readable in the gist files
+// instead of \uXXXX-escaping it.
+const RELAY_JSON = JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE;
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $action = (string) ($_GET['action'] ?? '');
@@ -170,9 +198,9 @@ if ($method === 'GET' && $action === 'streams') {
 }
 
 if ($method === 'POST' && $action === 'streams') {
-  $j = readJsonBody();
-  if ($j === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
-  $ok = writeGistFile($CFG, $id, $STREAMS, (string) json_encode($j, JSON_PRETTY_PRINT));
+  $raw = readRawJsonBody();
+  if ($raw === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
+  $ok = writeGistFile($CFG, $id, $STREAMS, $raw);
   http_response_code($ok ? 200 : 502);
   echo json_encode($ok ? ['ok' => true] : ['error' => 'upstream write failed']);
   exit;
@@ -185,9 +213,27 @@ if ($method === 'GET' && $action === 'analysis') {
 }
 
 if ($method === 'POST' && $action === 'analysis') {
-  $j = readJsonBody();
-  if ($j === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
-  $ok = writeGistFile($CFG, $id, $ANALYSIS, (string) json_encode($j, JSON_PRETTY_PRINT));
+  $raw = readRawJsonBody();
+  if ($raw === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
+  $ok = writeGistFile($CFG, $id, $ANALYSIS, $raw);
+  http_response_code($ok ? 200 : 502);
+  echo json_encode($ok ? ['ok' => true] : ['error' => 'upstream write failed']);
+  exit;
+}
+
+// The reinforcement layer's state file (points, level, events, badges).
+// App-owned read/write; chat sessions may also read it and append review
+// events. Same shape of handlers as the analysis file.
+if ($method === 'GET' && $action === 'reinforcement') {
+  $c = readGistFile($CFG, $id, $REINF);
+  echo ($c !== null && trim($c) !== '') ? $c : json_encode(['v' => 1, 'kind' => 'viz-org-reinforcement']);
+  exit;
+}
+
+if ($method === 'POST' && $action === 'reinforcement') {
+  $raw = readRawJsonBody();
+  if ($raw === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
+  $ok = writeGistFile($CFG, $id, $REINF, $raw);
   http_response_code($ok ? 200 : 502);
   echo json_encode($ok ? ['ok' => true] : ['error' => 'upstream write failed']);
   exit;
@@ -222,7 +268,7 @@ if ($method === 'POST' && $action === 'append') {
   foreach ($valid as $c) { $byId[$c['id']] = $c; }
   $merged = array_values($byId);
 
-  $ok = writeGistFile($CFG, $id, $INBOX, (string) json_encode($merged, JSON_PRETTY_PRINT));
+  $ok = writeGistFile($CFG, $id, $INBOX, (string) json_encode($merged, RELAY_JSON));
   http_response_code($ok ? 200 : 502);
   echo json_encode($ok
     ? ['ok' => true, 'added' => count($valid), 'inbox' => count($merged)]

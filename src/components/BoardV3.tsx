@@ -12,6 +12,7 @@ import {
   weeklyBudgetMinutes,
 } from "../store";
 import { progress, useStreams } from "../streams";
+import { useReinforcement } from "../reinforcement";
 import { squarify } from "../treemap";
 import type { Project, Task } from "../types";
 
@@ -172,6 +173,7 @@ function ProjectBoxV3({
 }) {
   const { dispatch } = useStore();
   const { streams } = useStreams();
+  const { dispatchR } = useReinforcement();
   const open = project.tasks.filter((t) => !t.done);
   const openMin = projectWorkMinutes(project);
   const doneMin = projectDoneMinutes(project);
@@ -184,8 +186,13 @@ function ProjectBoxV3({
   const ct = headerText(project.color);
 
   const complete = (t: Task) => {
+    const stream = streams.find((s) => s.taskId === t.id);
     dispatch({ type: "toggleTask", projectId: project.id, taskId: t.id });
-    notify(`✓ ${t.title}`, () => dispatch({ type: "undoComplete", projectId: project.id, taskId: t.id }));
+    dispatchR({ type: "close", task: t, stream });
+    notify(`✓ ${t.title}`, () => {
+      dispatch({ type: "undoComplete", projectId: project.id, taskId: t.id });
+      dispatchR({ type: "unclose", task: t });
+    });
   };
 
   const header =

@@ -1,6 +1,7 @@
 import { formatDuration, taskMinutes, useStore } from "../store";
 import { headerText, InlineHours } from "./BoardV3";
 import { useStreams } from "../streams";
+import { useReinforcement } from "../reinforcement";
 
 // The v3 project screen — the box, zoomed all the way in. The surface you
 // entered through is the exit: clicking the header (or the app logo) returns
@@ -24,6 +25,7 @@ export function ProjectViewV3({
 }) {
   const { state, dispatch } = useStore();
   const { streams } = useStreams();
+  const { dispatchR } = useReinforcement();
   const project = state.projects.find((p) => p.id === projectId);
   if (!project) return null;
 
@@ -36,12 +38,20 @@ export function ProjectViewV3({
   const ct = headerText(project.color);
 
   const toggle = (taskId: string, done: boolean, title: string) => {
+    const task = project.tasks.find((t) => t.id === taskId);
+    if (!task) return;
     if (done) {
       dispatch({ type: "undoComplete", projectId, taskId });
+      dispatchR({ type: "unclose", task });
       return;
     }
+    const stream = streams.find((s) => s.taskId === taskId);
     dispatch({ type: "toggleTask", projectId, taskId });
-    notify(`✓ ${title}`, () => dispatch({ type: "undoComplete", projectId, taskId }));
+    dispatchR({ type: "close", task, stream });
+    notify(`✓ ${title}`, () => {
+      dispatch({ type: "undoComplete", projectId, taskId });
+      dispatchR({ type: "unclose", task });
+    });
   };
 
   return (

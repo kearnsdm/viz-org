@@ -2546,7 +2546,7 @@ input[type="checkbox"] {
   line-height: 1.8;
 }
 .v3 .req .ok {
-  color: #9fd6b4;
+  color: var(--fill, #d9dde4);
 }
 .v3 .req .no {
   color: var(--lo);
@@ -2572,7 +2572,8 @@ input[type="checkbox"] {
 .v3 .ledg .pt {
   margin-left: auto;
   font-weight: 700;
-  color: #9fd6b4;
+  /* Neutral ink, not green — green = done only (channel discipline). */
+  color: var(--fill, #d9dde4);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -2781,6 +2782,431 @@ input[type="checkbox"] {
 }
 .v3 .wstep:hover {
   border-color: var(--acc);
+}
+
+/* ===================== v3 reinforcement layer ===================== */
+/* Ratified July 7 2026; visual reference reinforcement-progress-mockup-v4.
+ * The rank channel is deliberately DESATURATED (near-white fills on dark
+ * tracks) — the rank box stays the board's only high-saturation area, and
+ * urgency-red / done-green never appear here or in the badge tinctures. */
+
+.v3 {
+  --fill: #d9dde4;
+  --fill-carry: #9aa2ad;
+  --track: #3a3f47;
+  --rim-earned: #98a1af;
+  --rim-inreach: #3b4049;
+  --rim-rumor: #464c55;
+}
+
+/* ---- header rank rail ---- */
+.v3 .rankrail {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 6px 10px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.v3 .rr-rank {
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--mid);
+  white-space: nowrap;
+}
+.v3 .rr-bar {
+  width: 150px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--track);
+  overflow: hidden;
+  display: flex;
+}
+.v3 .rr-carry {
+  background: var(--fill-carry);
+}
+.v3 .rr-earn {
+  background: var(--fill);
+}
+.v3 .rr-togo {
+  font-size: 12px;
+  color: var(--mid);
+  white-space: nowrap;
+}
+.v3 .rankpop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 8; /* under .modal3 (9) — a left-open popover never outranks a sheet */
+  width: 264px;
+  background: var(--card);
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  cursor: default;
+}
+.v3 .rp-cap {
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--lo);
+  margin: 4px 0 2px;
+}
+.v3 .rp-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+  font-size: 12px;
+  color: var(--lo);
+}
+.v3 .rp-row span:last-child {
+  color: var(--hi);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- rank card (slim) ---- */
+.v3 .rankhead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.v3 .ranklbl {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mid);
+}
+.v3 .rankto {
+  color: var(--lo);
+}
+.v3 .rankhead strong {
+  color: var(--hi);
+}
+.v3 .rankpts {
+  margin-left: auto;
+  color: var(--mid);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.v3 .bigbar {
+  height: 12px;
+  border-radius: 4px;
+  background: var(--track);
+  display: flex;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.v3 .bb-carry {
+  background: var(--fill-carry);
+}
+.v3 .bb-earn {
+  background: var(--fill);
+}
+.v3 .barcap {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--mid);
+  flex-wrap: wrap;
+}
+.v3 .tiny3 {
+  display: block;
+  font-size: 11px;
+  color: var(--lo);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.v3 .alsoline {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--lo);
+}
+.v3 .alsoline b {
+  color: var(--mid);
+  font-weight: 500;
+}
+
+/* ---- recommendation boxes ---- */
+.v3 .rectwo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+@media (max-width: 620px) {
+  .v3 .rectwo {
+    grid-template-columns: 1fr;
+  }
+}
+.v3 .recsub {
+  font-size: 12px;
+  color: var(--lo);
+  margin: 0 0 8px;
+}
+.v3 .trow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.v3 .trow:hover {
+  background: var(--panel);
+}
+.v3 .trow-t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--mid);
+}
+.v3 .trow-v {
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--hi);
+  font-variant-numeric: tabular-nums;
+}
+.v3 .lvlup {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: var(--fill);
+  color: #23262b;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-weight: 650;
+  white-space: nowrap;
+  flex: none;
+}
+
+/* ---- Task Sheet nudge ---- */
+.v3 .nudge {
+  margin: 10px 0 2px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line2);
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--mid);
+}
+.v3 .nudge-how {
+  color: var(--lo);
+}
+
+/* ---- escutcheon badge case ---- */
+.v3 .shieldgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 12px 4px;
+  justify-items: center;
+}
+.v3 .shieldtile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 86px;
+  cursor: pointer;
+}
+.v3 .shrim {
+  width: 70px;
+  height: 82px;
+  padding: 2.5px;
+  background: var(--rim-inreach);
+  clip-path: polygon(0 0, 100% 0, 100% 56%, 88% 74%, 50% 100%, 12% 74%, 0 56%);
+  display: block;
+}
+.v3 .shieldtile.earned .shrim {
+  background: var(--rim-earned);
+}
+.v3 .shieldtile.rumor .shrim {
+  background: var(--rim-rumor);
+}
+.v3 .shfld {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  clip-path: polygon(0 0, 100% 0, 100% 56%, 88% 74%, 50% 100%, 12% 74%, 0 56%);
+}
+.v3 .shieldtile.dim .shfld {
+  background: #2b3037 !important;
+}
+.v3 .shieldtile.dim .shfld > * {
+  opacity: 0.32;
+  filter: grayscale(1);
+}
+.v3 .shieldtile.rumor .shfld {
+  background: #22252a !important;
+  color: var(--lo);
+  font-size: 22px;
+}
+.v3 .shfld.withchief {
+  padding-top: 13px;
+}
+.v3 .charges {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  justify-items: center;
+  align-content: center;
+  font-size: 15px;
+  line-height: 1.15;
+  padding-top: 2px;
+}
+.v3 .charges span:nth-child(3) {
+  grid-column: 1 / 3;
+}
+.v3 .charges2 {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+}
+.v3 .mini-charges {
+  font-size: 9px;
+  padding-top: 1px;
+}
+.v3 .roundel {
+  position: absolute;
+  top: -5px;
+  right: 5px;
+  background: var(--card);
+  border: 1px solid #6b7482;
+  border-radius: 8px;
+  font-size: 10px;
+  padding: 1px 6px;
+  color: var(--hi);
+  z-index: 2;
+}
+.v3 .shname {
+  margin-top: 5px;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--mid);
+  text-align: center;
+  line-height: 1.3;
+  max-width: 84px;
+}
+.v3 .shieldtile.dim .shname,
+.v3 .shieldtile.rumor .shname {
+  color: var(--lo);
+}
+.v3 .shtip {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 196px;
+  max-width: 78vw;
+  background: var(--card);
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11.5px;
+  color: var(--mid);
+  z-index: 8;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.35);
+  cursor: default;
+}
+.v3 .shieldtile:first-child .shtip,
+.v3 .shieldtile:nth-child(2) .shtip {
+  left: 0;
+  transform: none;
+}
+.v3 .shtip b {
+  display: block;
+  color: var(--hi);
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+.v3 .shtip i {
+  color: var(--lo);
+}
+.v3 .shwhen {
+  color: var(--lo);
+}
+.v3 .shprog {
+  display: block;
+  margin-top: 3px;
+  color: var(--lo);
+}
+.v3 .shplus {
+  width: 70px;
+  height: 82px;
+  border: 1.5px dashed var(--line2);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--lo);
+  gap: 2px;
+  font-size: 10.5px;
+}
+.v3 .shplus b {
+  font-size: 17px;
+  color: var(--mid);
+  font-weight: 600;
+}
+
+/* ---- badge growth strip ---- */
+.v3 .growstrip {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.v3 .growlbl {
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--lo);
+}
+.v3 .growrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 9px;
+  flex-wrap: wrap;
+}
+.v3 .shrim.mini {
+  width: 44px;
+  height: 52px;
+  padding: 2px;
+  background: var(--rim-earned);
+}
+.v3 .shrim.mini .shfld {
+  font-size: 15px;
+}
+.v3 .shrim.mini .shfld.withchief {
+  padding-top: 8px;
+}
+.v3 .growarrow {
+  color: var(--lo);
+  font-size: 14px;
+}
+.v3 .growcap {
+  font-size: 11px;
+  color: var(--lo);
+  margin-left: 4px;
 }
 
 @media (max-width: 900px) {

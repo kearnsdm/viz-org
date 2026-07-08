@@ -34,10 +34,19 @@ import {
   type PlanItem,
 } from "./store";
 import { StreamsContext, loadStreams, saveStreams, streamsReducer } from "./streams";
+import {
+  REINF_STORAGE_KEY,
+  ReinforcementContext,
+  emptyReinforcement,
+  loadReinforcement,
+  reinforcementReducer,
+  saveReinforcement,
+} from "./reinforcement";
+import { RankRail } from "./components/RankRail";
 import type { Urgency } from "./types";
 
 const UI_VERSION_KEY = "viz-org-ui";
-import { RANKS, availableCredits, badgeById, level, rankIndex, withGame } from "./game";
+import { availableCredits, badgeById, level, withGame } from "./game";
 import {
   GistRateLimitError,
   SyncContext,
@@ -45,10 +54,11 @@ import {
   findOrCreateGist,
   loadSyncConfig,
   pullInbox,
+  pullReinforcement,
   pullRemoteRetrying,
   pullStreams,
+  pushFiles,
   pushRemoteRetrying,
-  pushStreams,
   saveSyncConfig,
   type SyncConfig,
   type SyncStatus,
@@ -311,7 +321,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
   const [tab, setTab] = useState<V3Tab>("board");
   const [projectView, setProjectView] = useState<string | null>(null);
   const [sheet, setSheet] = useState<{ projectId: string; taskId: string } | null>(null);
-  const [focus, setFocus] = useState<{ title?: string } | null>(null);
+  const [focus, setFocus] = useState<{ title?: string; taskId?: string; preset?: number } | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; undo?: () => void } | null>(null);
@@ -357,11 +367,9 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
   const sprintOn = (projectId: string, taskId?: string) => {
     setProjectView(projectId);
     const title = taskId ? findTaskItem(state, taskId)?.task.title : undefined;
-    setFocus({ title });
+    setFocus({ title, taskId });
   };
 
-  const g = withGame(state.game);
-  const rank = RANKS[rankIndex(g)];
   const sheetTitle = sheet ? findTaskItem(state, sheet.taskId)?.task.title : undefined;
 
   return (
@@ -375,9 +383,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           <div className="sub">the week as one bounded field — boxes are hours, stripes are tasks</div>
         </div>
         <div className="sp" />
-        <div className="hud" title="Points · rank · build credits ready">
-          ⚡ {g.points} · L{rankIndex(g) + 1} {rank.name} · 🛠️ {availableCredits(g)}
-        </div>
+        <RankRail />
         <button className="btn" onClick={() => setAddOpen(true)}>
           + New project
         </button>
@@ -421,7 +427,18 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
       ) : tab === "archive" ? (
         <ArchiveV3 onOpenProject={setProjectView} />
       ) : tab === "rewards" ? (
-        <RewardsV3 notify={notify} />
+        <RewardsV3
+          notify={notify}
+          onOpenTask={openTask}
+          onSprint={(opts) => {
+            if (opts?.projectId) setProjectView(opts.projectId);
+            setFocus({
+              taskId: opts?.taskId,
+              preset: opts?.preset,
+              title: opts?.taskId ? findTaskItem(state, opts.taskId)?.task.title : undefined,
+            });
+          }}
+        />
       ) : (
         <AnalysisV3 onOpenProject={setProjectView} onSprint={(pid) => sprintOn(pid)} />
       )}
@@ -432,14 +449,23 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           taskId={sheet.taskId}
           onClose={() => setSheet(null)}
           onSprint={() => {
+            const id = sheet.taskId;
             setSheet(null);
-            setFocus({ title: sheetTitle });
+            setFocus({ title: sheetTitle, taskId: id });
           }}
           onMoved={(newProjectId) => setSheet({ projectId: newProjectId, taskId: sheet.taskId })}
           notify={notify}
         />
       )}
-      {focus && <FocusV3 title={focus.title} onClose={() => setFocus(null)} notify={notify} />}
+      {focus && (
+        <FocusV3
+          title={focus.title}
+          taskId={focus.taskId}
+          preset={focus.preset}
+          onClose={() => setFocus(null)}
+          notify={notify}
+        />
+      )}
       {addOpen && <AddProjectDialog onClose={() => setAddOpen(false)} />}
       {syncOpen && <SyncDialog onClose={() => setSyncOpen(false)} />}
       {resurfaced && resurfaced.length > 0 && (
@@ -485,7 +511,8 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           </div>
         </div>
       )}
-      <BadgeToast />
+      {/* Legacy BadgeToast stays on v2/classic only — its lucky/combo popups
+          have no place next to the ratified escutcheon roster. */}
       <div className={`toast3 ${toast ? "on" : ""}`}>
         {toast?.msg}
         {toast?.undo && (
@@ -517,6 +544,14 @@ export function App() {
   const latestStreams = useRef(streams);
   latestStreams.current = streams;
 
+  // The reinforcement layer: append-only event log, level, badges. Its gist
+  // file merges by event id (never adopt-replace), so pulls can't destroy
+  // locally logged events and two devices can't double-seed.
+  const [rs, dispatchR] = useReducer(reinforcementReducer, undefined, () => loadReinforcement() ?? emptyReinforcement());
+  const rsHydrated = useRef(false);
+  const latestRs = useRef(rs);
+  latestRs.current = rs;
+
   // When a gist write hits GitHub's per-user gist_update rate limit, pause ALL
   // writers (board + streams) until the bucket refills — otherwise every change
   // keeps firing PATCHes that just re-pin the limit at zero. Epoch ms; 0 = open.
@@ -534,6 +569,44 @@ export function App() {
   useEffect(() => {
     saveStreams(streams);
   }, [streams]);
+  useEffect(() => {
+    saveReinforcement(rs);
+  }, [rs]);
+
+  // Pull the remote reinforcement file once sync is configured. If neither a
+  // remote file nor local history exists, fold the legacy points in exactly
+  // once (the seed is an event with a fixed id, so a double seed collapses in
+  // any later merge). Without sync, seed locally.
+  useEffect(() => {
+    rsHydrated.current = false;
+    if (!config) {
+      if (latestRs.current.events.length === 0) {
+        dispatchR({ type: "seed", legacy: withGame(latest.current.game) });
+      }
+      rsHydrated.current = true;
+      return;
+    }
+    let cancelled = false;
+    pullReinforcement(config)
+      .then((remote) => {
+        if (cancelled) return;
+        if (remote) dispatchR({ type: "ingest", remote });
+        else dispatchR({ type: "seed", legacy: withGame(latest.current.game) });
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) rsHydrated.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [config]);
+
+  // Re-evaluate computable badges whenever the earn history or streams move.
+  // The reducer returns the same state when nothing changed, so no loop.
+  useEffect(() => {
+    dispatchR({ type: "evaluateBadges", board: latest.current, streams: latestStreams.current });
+  }, [rs.events, streams]);
 
   // Pull remote streams once sync is configured; merge is LWW by updatedAt so
   // a chat-written checklist and a local check can't clobber each other.
@@ -557,25 +630,90 @@ export function App() {
     };
   }, [config]);
 
-  // Push stream changes up (debounced) once the initial pull has settled.
+  // --- the coalesced pusher --------------------------------------------------
+  // One user action can dirty the board (done flag), the streams (item state),
+  // AND the reinforcement log (step/close event) at once. GitHub meters gist
+  // writes in one small per-user bucket, and a single gist PATCH can carry all
+  // three files — so dirty files accumulate behind ONE debounce and ship
+  // together: 3× the write budget's mileage, and stream-state/event pairs land
+  // atomically. A rate-limit pause reschedules the flush instead of dropping it.
+  const dirty = useRef({ board: false, streams: false, reinf: false });
+  const flushTimer = useRef<number | null>(null);
+
+  const flushDirty = useCallback(() => {
+    if (!config) return;
+    const wait = writesPausedUntil.current - Date.now();
+    if (wait > 0) {
+      if (flushTimer.current) window.clearTimeout(flushTimer.current);
+      flushTimer.current = window.setTimeout(() => flushDirty(), wait + 500);
+      return;
+    }
+    const d = { ...dirty.current };
+    if (!d.board && !d.streams && !d.reinf) return;
+    dirty.current = { board: false, streams: false, reinf: false };
+    setStatus({ phase: "syncing" });
+    pushFiles(config, {
+      board: d.board ? latest.current : undefined,
+      streams: d.streams ? latestStreams.current : undefined,
+      reinforcement: d.reinf ? latestRs.current : undefined,
+    })
+      .then(() => setStatus({ phase: "ok", at: Date.now() }))
+      .catch((e) => {
+        // Whatever we tried to send is still dirty; retry after the pause (or
+        // a short beat for transient network trouble).
+        dirty.current = {
+          board: dirty.current.board || d.board,
+          streams: dirty.current.streams || d.streams,
+          reinf: dirty.current.reinf || d.reinf,
+        };
+        noteRateLimit(e);
+        setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" });
+        const retry = Math.max(writesPausedUntil.current - Date.now() + 500, 5000);
+        if (flushTimer.current) window.clearTimeout(flushTimer.current);
+        flushTimer.current = window.setTimeout(() => flushDirty(), retry);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config]);
+
+  const scheduleFlush = useCallback(
+    (delay = 1200) => {
+      if (flushTimer.current) window.clearTimeout(flushTimer.current);
+      flushTimer.current = window.setTimeout(() => flushDirty(), delay);
+    },
+    [flushDirty],
+  );
+
   useEffect(() => {
     if (!config || !streamsHydrated.current) return;
-    const id = setTimeout(() => {
-      if (Date.now() < writesPausedUntil.current) return; // rate-limit backoff
-      pushStreams(config, latestStreams.current).catch(noteRateLimit);
-    }, 1200);
-    return () => clearTimeout(id);
-  }, [streams, config]);
+    dirty.current.streams = true;
+    scheduleFlush();
+  }, [streams, config, scheduleFlush]);
+
+  useEffect(() => {
+    if (!config || !rsHydrated.current) return;
+    dirty.current.reinf = true;
+    scheduleFlush();
+  }, [rs, config, scheduleFlush]);
 
   // Live-sync across tabs/windows on the same browser (same-computer screens).
+  // The reinforcement key merges by event id instead of replacing, so two tabs
+  // can't double-pay a doubler or lose each other's events.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (e.key !== STORAGE_KEY || !e.newValue) return;
-      if (e.newValue === JSON.stringify(latest.current)) return;
-      try {
-        dispatch({ type: "replaceState", state: JSON.parse(e.newValue) });
-      } catch {
-        /* ignore malformed */
+      if (e.key === STORAGE_KEY && e.newValue) {
+        if (e.newValue === JSON.stringify(latest.current)) return;
+        try {
+          dispatch({ type: "replaceState", state: JSON.parse(e.newValue) });
+        } catch {
+          /* ignore malformed */
+        }
+      }
+      if (e.key === REINF_STORAGE_KEY && e.newValue) {
+        try {
+          dispatchR({ type: "ingest", remote: JSON.parse(e.newValue) });
+        } catch {
+          /* ignore malformed */
+        }
       }
     };
     window.addEventListener("storage", onStorage);
@@ -651,24 +789,20 @@ export function App() {
     return fresh;
   }, [config]);
 
+  // "Sync now" (and the recovery handler): everything is treated as dirty and
+  // flushed in one PATCH.
   const pushNow = useCallback(() => {
     if (!config) return;
-    if (Date.now() < writesPausedUntil.current) return; // paused until rate limit refills
-    setStatus({ phase: "syncing" });
-    pushRemoteRetrying(config, latest.current)
-      .then(() => setStatus({ phase: "ok", at: Date.now() }))
-      .catch((e) => {
-        noteRateLimit(e);
-        setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" });
-      });
-  }, [config]);
+    dirty.current = { board: true, streams: true, reinf: true };
+    flushDirty();
+  }, [config, flushDirty]);
 
-  // Push changes up (debounced) once the initial pull has settled.
+  // Push board changes up (debounced) once the initial pull has settled.
   useEffect(() => {
     if (!config || !hydrated.current) return;
-    const id = setTimeout(pushNow, 1200);
-    return () => clearTimeout(id);
-  }, [state, config, pushNow]);
+    dirty.current.board = true;
+    scheduleFlush();
+  }, [state, config, scheduleFlush]);
 
   // When the connection comes back (or the tab regains focus), re-sync so a
   // stale "NetworkError" from a blip heals itself automatically.
@@ -729,15 +863,17 @@ export function App() {
   return (
     <StoreContext.Provider value={{ state, dispatch }}>
       <StreamsContext.Provider value={{ streams, dispatch: dispatchStreams }}>
-        <SyncContext.Provider value={{ config, status, connect, disconnect, syncNow, checkInbox: ingestInbox }}>
-          {version === "v3" ? (
-            <WorkspaceV3 version={version} onToggleVersion={toggleVersion} />
-          ) : version === "v2" ? (
-            <WorkspaceV2 version={version} onToggleVersion={toggleVersion} />
-          ) : (
-            <Workspace version={version} onToggleVersion={toggleVersion} />
-          )}
-        </SyncContext.Provider>
+        <ReinforcementContext.Provider value={{ rs, dispatchR }}>
+          <SyncContext.Provider value={{ config, status, connect, disconnect, syncNow, checkInbox: ingestInbox }}>
+            {version === "v3" ? (
+              <WorkspaceV3 version={version} onToggleVersion={toggleVersion} />
+            ) : version === "v2" ? (
+              <WorkspaceV2 version={version} onToggleVersion={toggleVersion} />
+            ) : (
+              <Workspace version={version} onToggleVersion={toggleVersion} />
+            )}
+          </SyncContext.Provider>
+        </ReinforcementContext.Provider>
       </StreamsContext.Provider>
     </StoreContext.Provider>
   );
