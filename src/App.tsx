@@ -407,7 +407,13 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           notify={notify}
         />
       ) : tab === "board" ? (
-        <BoardV3 onOpenProject={setProjectView} onOpenTask={openTask} onStartSprint={sprintOn} notify={notify} />
+        <BoardV3
+          onOpenProject={setProjectView}
+          onOpenTask={openTask}
+          onStartSprint={sprintOn}
+          onAddProject={() => setAddOpen(true)}
+          notify={notify}
+        />
       ) : tab === "week" ? (
         <WeekV3 onOpenTask={openTask} />
       ) : tab === "intake" ? (

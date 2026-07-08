@@ -132,11 +132,16 @@ function useMeasure<T extends HTMLElement>() {
 /** Projects under this share of the board fold into the "Other" group. */
 const OTHER_SHARE = 0.05;
 const GROUP_ID = "__other__";
+/** The week's unbooked time, as space (dashed tile). */
+const FREE_ID = "__free__";
+/** Work past what the week holds, as red area (hatched tile). */
+const OVER_ID = "__overbudget__";
 
 interface BoardV3Props {
   onOpenProject: (projectId: string) => void;
   onOpenTask: (projectId: string, taskId: string) => void;
   onStartSprint: (projectId: string, taskId?: string) => void;
+  onAddProject: () => void;
   notify: (msg: string, undo?: () => void) => void;
 }
 
@@ -290,7 +295,7 @@ function ProjectBoxV3({
   );
 }
 
-export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: BoardV3Props) {
+export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, onAddProject, notify }: BoardV3Props) {
   const { state, dispatch } = useStore();
   const { ref, size } = useMeasure<HTMLDivElement>();
   const [grpOpen, setGrpOpen] = useState(false);
@@ -317,9 +322,13 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
   const total = entries.reduce((s, e) => s + e.v, 0) || 1;
 
   // The smallest categories fold into one expandable "Other" box.
-  let nodes: Array<{ p?: Project; grp?: Array<{ p: Project; v: number }>; v: number; id: string }> = entries.map(
-    (e) => ({ p: e.p, v: e.v, id: e.p.id }),
-  );
+  let nodes: Array<{
+    p?: Project;
+    grp?: Array<{ p: Project; v: number }>;
+    kind?: "free" | "over";
+    v: number;
+    id: string;
+  }> = entries.map((e) => ({ p: e.p, v: e.v, id: e.p.id }));
   if (!grpOpen && mode !== "holding" && !simple) {
     const small = entries.filter((e) => e.v / total < OTHER_SHARE);
     if (small.length >= 2) {
@@ -327,6 +336,17 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
       nodes = nodes.filter((n) => !ids.has(n.id));
       nodes.push({ grp: small, v: small.reduce((s, e) => s + e.v, 0), id: GROUP_ID });
     }
+  }
+
+  // The frame IS the week: unbooked budget shows up as free space (dashed
+  // tile), and work past what the week holds shows up as red area (hatched
+  // tile) that grows as the budget shrinks. Both go through the same
+  // squarifier, so every tile's area stays proportional to real hours.
+  if (mode !== "holding") {
+    const used = entries.reduce((s, e) => s + e.v, 0);
+    const budget = weeklyBudgetMinutes(state);
+    if (budget > used) nodes.push({ id: FREE_ID, kind: "free", v: budget - used });
+    else if (used > budget) nodes.push({ id: OVER_ID, kind: "over", v: used - budget });
   }
 
   const rects =
@@ -430,6 +450,34 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
           };
           const node = nodes.find((n) => n.id === r.id);
           if (!node) return null;
+          if (node.kind === "free") {
+            return (
+              <div
+                key={FREE_ID}
+                className="box freebox"
+                style={pos}
+                title="Unbooked time — add a project"
+                onClick={onAddProject}
+              >
+                <span className="fl">
+                  {formatDuration(node.v)} free
+                  <br />
+                  <span style={{ opacity: 0.7 }}>unbooked time — add a box</span>
+                </span>
+              </div>
+            );
+          }
+          if (node.kind === "over") {
+            return (
+              <div key={OVER_ID} className="box overbox" style={pos} title="Booked past the week's budget">
+                <span className="fl">
+                  +{formatDuration(node.v)}
+                  <br />
+                  <span style={{ opacity: 0.85 }}>more than the week holds</span>
+                </span>
+              </div>
+            );
+          }
           if (node.grp) {
             return (
               <div
