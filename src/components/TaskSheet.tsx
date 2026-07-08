@@ -242,27 +242,41 @@ export function TaskSheet({
                 </button>
               </>
             ) : (
-              <>
-                <span className="hold-status">⏸ Hold — park it off the board until</span>
-                <input
-                  type="date"
-                  value={holdDate || task.scheduledFor || ""}
-                  onChange={(e) => setHoldDate(e.target.value)}
-                />
-                <button
-                  className="btn"
-                  disabled={!(holdDate || task.scheduledFor)}
-                  title="A hold always needs a return date"
-                  onClick={() => {
-                    const until = holdDate || task.scheduledFor;
-                    if (!until) return;
-                    dispatch({ type: "holdTask", projectId, taskId, until });
-                    notify(`⏸ Held until ${until}`, () => dispatch({ type: "releaseTask", projectId, taskId }));
-                  }}
-                >
-                  ⏸ Hold
-                </button>
-              </>
+              (() => {
+                // A hold needs a FUTURE return date — holding "until" today or a
+                // past date would resurface immediately. Prefill only a planned
+                // day that's already in the future; otherwise require a pick.
+                const tomorrow = (() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + 1);
+                  return isoDate(d);
+                })();
+                const futurePlanned = task.scheduledFor && task.scheduledFor >= tomorrow ? task.scheduledFor : "";
+                const until = holdDate || futurePlanned;
+                return (
+                  <>
+                    <span className="hold-status">⏸ Hold — park it off the board until</span>
+                    <input
+                      type="date"
+                      min={tomorrow}
+                      value={until}
+                      onChange={(e) => setHoldDate(e.target.value)}
+                    />
+                    <button
+                      className="btn"
+                      disabled={!until || until < tomorrow}
+                      title="A hold always needs a future return date"
+                      onClick={() => {
+                        if (!until || until < tomorrow) return;
+                        dispatch({ type: "holdTask", projectId, taskId, until });
+                        notify(`⏸ Held until ${until}`, () => dispatch({ type: "releaseTask", projectId, taskId }));
+                      }}
+                    >
+                      ⏸ Hold
+                    </button>
+                  </>
+                );
+              })()
             )}
           </div>
         )}
