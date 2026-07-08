@@ -194,6 +194,13 @@ export async function pushRemoteRetrying(cfg: SyncConfig, state: AppState, attem
 export interface SyncContextValue {
   config: SyncConfig | null;
   status: SyncStatus;
+  /** Epoch ms until which writes are paused by GitHub's write rate limit
+   * (0 = not paused). While this is in the future, local changes are NOT
+   * reaching the gist — the UI must warn, because switching machines in this
+   * window is how the whole-file LWW sync clobbers unsynced work. */
+  pausedUntil: number;
+  /** True once local changes exist that haven't been confirmed pushed. */
+  hasUnsynced: boolean;
   connect: (token: string) => void;
   disconnect: () => void;
   syncNow: () => void;

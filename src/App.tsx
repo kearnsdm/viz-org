@@ -60,6 +60,7 @@ import {
   pushFiles,
   pushRemoteRetrying,
   saveSyncConfig,
+  useSync,
   type SyncConfig,
   type SyncStatus,
 } from "./sync";
@@ -316,6 +317,96 @@ const V3_TABS: Array<{ id: V3Tab; label: string }> = [
   { id: "analysis", label: "Analysis" },
 ];
 
+/** A live "mm:ss"/"about N min" helper for the pause countdown. */
+function untilLabel(ms: number): { clock: string; approx: string } {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  const clock = `${mm}:${String(ss).padStart(2, "0")}`;
+  const approx = mm >= 1 ? `about ${mm} min` : "under a minute";
+  return { clock, approx };
+}
+
+/** Compact header chip: at a glance, is my work reaching the cloud? Clicking
+ * forces a sync. Quiet when synced; loud only when it matters. */
+function SyncPill() {
+  const { config, status, pausedUntil, hasUnsynced, syncNow } = useSync();
+  const paused = pausedUntil > Date.now();
+  if (!config) return <span className="syncpill local" title="Not connected — this device only. Open Backup / Sync to connect.">Local only</span>;
+  let cls = "ok";
+  let label = "Synced";
+  if (paused) {
+    cls = "warn";
+    label = "Not syncing";
+  } else if (status.phase === "error") {
+    cls = "warn";
+    label = "Not synced";
+  } else if (status.phase === "syncing") {
+    cls = "busy";
+    label = "Saving…";
+  } else if (hasUnsynced) {
+    cls = "busy";
+    label = "Unsaved";
+  }
+  return (
+    <button className={`syncpill ${cls}`} onClick={syncNow} title="Sync now">
+      <span className="syncdot" />
+      {label}
+    </button>
+  );
+}
+
+/** The prominent warning. It exists because the board syncs whole-file
+ * last-write-wins: while writes are paused, editing on a SECOND machine lets
+ * that machine's older copy overwrite this device's unsynced work on the next
+ * sync. So the banner's job is to say plainly: saved here, not elsewhere,
+ * don't switch machines yet. */
+function SyncBanner() {
+  const { pausedUntil, status, hasUnsynced, syncNow } = useSync();
+  const [now, setNow] = useState(Date.now());
+  const paused = pausedUntil > now;
+  useEffect(() => {
+    if (!paused) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [paused]);
+
+  if (paused) {
+    const { clock, approx } = untilLabel(pausedUntil - now);
+    const at = new Date(pausedUntil).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return (
+      <div className="syncbanner warn" role="alert">
+        <span className="sb-badge">⚠ Not syncing</span>
+        <span className="sb-body">
+          GitHub's write limit is maxed out. Your changes are <b>saved on this device</b> but aren't reaching your other
+          machines yet — <b>don't edit on another device</b> until this clears, or its older copy can overwrite this
+          work. Writes resume ~{at} ({approx}).
+        </span>
+        <span className="sb-clock">{clock}</span>
+        <button className="btn" onClick={syncNow}>
+          Try now
+        </button>
+      </div>
+    );
+  }
+  // A non-rate-limit failure that left changes stranded is dangerous too.
+  if (hasUnsynced && status.phase === "error") {
+    return (
+      <div className="syncbanner warn" role="alert">
+        <span className="sb-badge">⚠ Changes not synced</span>
+        <span className="sb-body">
+          The last sync didn't go through, so your recent changes are <b>saved on this device only</b>. Avoid switching
+          machines until it succeeds.
+        </span>
+        <button className="btn" onClick={syncNow}>
+          Try now
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
+
 function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggleVersion: () => void }) {
   const { state, dispatch } = useStore();
   const [tab, setTab] = useState<V3Tab>("board");
@@ -383,6 +474,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           <div className="sub">the week as one bounded field — boxes are hours, stripes are tasks</div>
         </div>
         <div className="sp" />
+        <SyncPill />
         <RankRail />
         <button className="btn" onClick={() => setAddOpen(true)}>
           + New project
@@ -402,6 +494,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           ))}
         </div>
       </div>
+      <SyncBanner />
 
       {projectView ? (
         <ProjectViewV3
@@ -555,12 +648,31 @@ export function App() {
   // When a gist write hits GitHub's per-user gist_update rate limit, pause ALL
   // writers (board + streams) until the bucket refills — otherwise every change
   // keeps firing PATCHes that just re-pin the limit at zero. Epoch ms; 0 = open.
+  // The ref drives the flush scheduling; the mirrored STATE drives the visible
+  // warning (a ref alone wouldn't re-render). `unsynced` is true whenever local
+  // changes exist that haven't been confirmed onto the gist — the real
+  // data-loss signal, since whole-file LWW clobbers unsynced work on switch.
   const writesPausedUntil = useRef(0);
+  const [pausedUntil, setPausedUntil] = useState(0);
+  const [unsynced, setUnsynced] = useState(false);
   const noteRateLimit = (e: unknown) => {
     if (e instanceof GistRateLimitError) {
       writesPausedUntil.current = (e.resetAt ?? Math.floor(Date.now() / 1000) + 60) * 1000;
+      setPausedUntil(writesPausedUntil.current);
     }
   };
+
+  // Auto-clear the pause banner the moment the bucket is due to refill.
+  useEffect(() => {
+    if (!pausedUntil) return;
+    const ms = pausedUntil - Date.now();
+    if (ms <= 0) {
+      setPausedUntil(0);
+      return;
+    }
+    const id = window.setTimeout(() => setPausedUntil(0), ms + 500);
+    return () => window.clearTimeout(id);
+  }, [pausedUntil]);
 
   // Persist locally on every change.
   useEffect(() => {
@@ -657,7 +769,13 @@ export function App() {
       streams: d.streams ? latestStreams.current : undefined,
       reinforcement: d.reinf ? latestRs.current : undefined,
     })
-      .then(() => setStatus({ phase: "ok", at: Date.now() }))
+      .then(() => {
+        setStatus({ phase: "ok", at: Date.now() });
+        setPausedUntil(0);
+        // Only truly clean if nothing new was dirtied while this PATCH was in
+        // flight.
+        if (!dirty.current.board && !dirty.current.streams && !dirty.current.reinf) setUnsynced(false);
+      })
       .catch((e) => {
         // Whatever we tried to send is still dirty; retry after the pause (or
         // a short beat for transient network trouble).
@@ -677,6 +795,7 @@ export function App() {
 
   const scheduleFlush = useCallback(
     (delay = 1200) => {
+      setUnsynced(true); // something local changed and isn't on the gist yet
       if (flushTimer.current) window.clearTimeout(flushTimer.current);
       flushTimer.current = window.setTimeout(() => flushDirty(), delay);
     },
@@ -789,10 +908,14 @@ export function App() {
     return fresh;
   }, [config]);
 
-  // "Sync now" (and the recovery handler): everything is treated as dirty and
-  // flushed in one PATCH.
+  // "Sync now" / "Try now" (and the recovery handler): a MANUAL attempt clears
+  // the pause optimistically so the flush actually fires — if GitHub is still
+  // rate-limited the failure path re-pauses it. Everything is treated as dirty
+  // and flushed in one PATCH.
   const pushNow = useCallback(() => {
     if (!config) return;
+    writesPausedUntil.current = 0;
+    setPausedUntil(0);
     dirty.current = { board: true, streams: true, reinf: true };
     flushDirty();
   }, [config, flushDirty]);
@@ -864,7 +987,9 @@ export function App() {
     <StoreContext.Provider value={{ state, dispatch }}>
       <StreamsContext.Provider value={{ streams, dispatch: dispatchStreams }}>
         <ReinforcementContext.Provider value={{ rs, dispatchR }}>
-          <SyncContext.Provider value={{ config, status, connect, disconnect, syncNow, checkInbox: ingestInbox }}>
+          <SyncContext.Provider
+            value={{ config, status, pausedUntil, hasUnsynced: unsynced, connect, disconnect, syncNow, checkInbox: ingestInbox }}
+          >
             {version === "v3" ? (
               <WorkspaceV3 version={version} onToggleVersion={toggleVersion} />
             ) : version === "v2" ? (

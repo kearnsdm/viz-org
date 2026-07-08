@@ -2799,6 +2799,96 @@ input[type="checkbox"] {
   --rim-rumor: #464c55;
 }
 
+/* ---- sync status pill + data-loss warning banner ---- */
+.v3 .syncpill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line2);
+  background: var(--panel);
+  color: var(--lo);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.v3 .syncpill.local {
+  cursor: default;
+}
+.v3 .syncdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--lo);
+  flex: none;
+}
+.v3 .syncpill.ok .syncdot {
+  background: #7c96c8;
+}
+.v3 .syncpill.busy {
+  color: var(--mid);
+}
+.v3 .syncpill.busy .syncdot {
+  background: var(--acc);
+  animation: syncpulse 1.2s ease-in-out infinite;
+}
+.v3 .syncpill.warn {
+  color: #ffd9db;
+  border-color: color-mix(in srgb, var(--urgent) 55%, var(--line2));
+  background: color-mix(in srgb, var(--urgent) 16%, var(--panel));
+}
+.v3 .syncpill.warn .syncdot {
+  background: var(--urgent);
+  animation: syncpulse 1.4s ease-in-out infinite;
+}
+@keyframes syncpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.v3 .syncbanner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--urgent) 55%, var(--line2));
+  border-left: 4px solid var(--urgent);
+  background: color-mix(in srgb, var(--urgent) 12%, var(--panel));
+  font-size: 12.5px;
+  color: var(--mid);
+}
+.v3 .sb-badge {
+  font-weight: 800;
+  color: #ffd9db;
+  white-space: nowrap;
+  flex: none;
+}
+.v3 .sb-body {
+  flex: 1;
+  min-width: 200px;
+  line-height: 1.5;
+}
+.v3 .sb-body b {
+  color: var(--hi);
+  font-weight: 700;
+}
+.v3 .sb-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: #ffd9db;
+  flex: none;
+}
+
 /* ---- header rank rail ---- */
 .v3 .rankrail {
   position: relative;
