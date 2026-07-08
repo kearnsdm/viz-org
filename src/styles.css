@@ -1760,13 +1760,15 @@ input[type="checkbox"] {
   background: #0f1114;
   overflow: hidden;
 }
-/* The main board is a SQUARE: it grows with the window up to a cap and stays
- * centered, so the week reads as a fixed, permanent field — not a widening
- * rectangle. (Archive keeps its own rectangular frame.) */
+/* The main board is a BOUNDED LANDSCAPE — a contained field, centered, that
+ * fills the available height and runs ~1.6:1 wide (capped), so it reads as a
+ * permanent frame rather than a window-wide strip, while staying big enough to
+ * review at a glance. Height-driven so it never overflows the viewport.
+ * (Archive keeps its own rectangular frame.) */
 .v3 .board-frame {
-  width: min(100%, 74vh, 900px);
-  height: auto;
-  aspect-ratio: 1 / 1;
+  --board-h: min(74vh, 760px);
+  height: var(--board-h);
+  width: min(100%, calc(var(--board-h) * 1.6), 1240px);
   margin-inline: auto;
 }
 .v3 .box {
@@ -2754,9 +2756,9 @@ input[type="checkbox"] {
   .v3 .frame {
     height: 460px;
   }
-  /* Keep the main board square on small screens (fills width). */
+  /* On small screens the board fills the width at a comfortable height. */
   .v3 .board-frame {
-    height: auto;
-    aspect-ratio: 1 / 1;
+    --board-h: min(68vh, 460px);
+    width: 100%;
   }
 }
