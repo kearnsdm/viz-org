@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { exportBoard, importBoard, useStore } from "../store";
-import { useSync } from "../sync";
+import { DEFAULT_RELAY_URL, hasLegacyGistConfig, useSync } from "../sync";
 
 function statusText(phase: string, at?: number, message?: string): string {
   switch (phase) {
@@ -22,7 +22,10 @@ export function SyncDialog({ onClose }: { onClose: () => void }) {
   const [copied, setCopied] = useState(false);
   const [paste, setPaste] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [token, setToken] = useState("");
+  const [relayKey, setRelayKey] = useState("");
+  const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
+  const [showUrl, setShowUrl] = useState(false);
+  const legacy = hasLegacyGistConfig();
 
   const taskCount = state.projects.reduce((s, p) => s + p.tasks.length, 0);
 
@@ -59,17 +62,18 @@ export function SyncDialog({ onClose }: { onClose: () => void }) {
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <h2>Sync &amp; backup</h2>
 
-        {/* Automatic cross-device sync via GitHub */}
+        {/* Automatic cross-device sync via the viz relay (Devin's own hosting) */}
         <p className="muted">
-          <strong>Cross-device sync (GitHub).</strong> Connect each device with the same token and they all
-          share one board automatically.
+          <strong>Cross-device sync.</strong> Connect each device with the same relay key and they all share one
+          board automatically — stored on your own hosting, no GitHub account involved.
         </p>
 
         {config ? (
           <>
             <div className="sync-status muted">{statusText(status.phase, status.at, status.message)}</div>
             <p className="muted" style={{ fontSize: 12 }}>
-              Connected ✓ — board stored in a private gist. Use the same token on your other devices.
+              Connected ✓ — syncing through {config.url.replace(/^https?:\/\//, "").split("/")[0]}. Use the same
+              relay key on your other devices.
             </p>
             <div className="dialog__actions" style={{ marginTop: 8 }}>
               <button className="btn btn-ghost" onClick={disconnect}>
@@ -82,22 +86,48 @@ export function SyncDialog({ onClose }: { onClose: () => void }) {
           </>
         ) : (
           <>
+            {legacy && (
+              <p className="muted" style={{ fontSize: 12, borderLeft: "3px solid var(--accent)", paddingLeft: 8 }}>
+                This device was on the old GitHub-based sync. Sync moved to your own hosting — paste the{" "}
+                <strong>relay key</strong> (from your password manager) to reconnect. Nothing on this device is lost.
+              </p>
+            )}
             <label className="field">
-              GitHub token (with “gist” access)
+              Relay key
               <input
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="ghp_…"
+                value={relayKey}
+                onChange={(e) => setRelayKey(e.target.value)}
+                placeholder="the long key from your password manager"
                 autoComplete="off"
               />
             </label>
+            {showUrl ? (
+              <label className="field">
+                Relay URL
+                <input value={relayUrl} onChange={(e) => setRelayUrl(e.target.value)} autoComplete="off" />
+              </label>
+            ) : (
+              <p className="muted" style={{ fontSize: 11, margin: "4px 0 0" }}>
+                Syncs via {DEFAULT_RELAY_URL.replace(/^https?:\/\//, "")} ·{" "}
+                <a
+                  href="#"
+                  style={{ color: "var(--accent)" }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setShowUrl(true);
+                  }}
+                >
+                  change
+                </a>
+              </p>
+            )}
             <div className="sync-status muted">{statusText(status.phase, status.at, status.message)}</div>
-            <p className="muted" style={{ fontSize: 12 }}>
-              Need one? github.com/settings/tokens → <em>Generate new token (classic)</em> → check only{" "}
-              <strong>gist</strong> → generate → paste it here. It's free and stays on this device.
-            </p>
             <div className="dialog__actions" style={{ marginTop: 8 }}>
-              <button className="btn btn-primary" onClick={() => connect(token.trim())} disabled={!token.trim()}>
+              <button
+                className="btn btn-primary"
+                onClick={() => connect(relayKey.trim(), relayUrl.trim())}
+                disabled={!relayKey.trim()}
+              >
                 Connect
               </button>
             </div>

@@ -4,21 +4,21 @@
  *
  * Copy this to  viz-relay-config.php  (same folder) and fill in real values.
  * viz-relay-config.php is gitignored and must NEVER be committed.
- * Best practice: place the real config OUTSIDE the web root and point
- * $cfgPath in viz-relay.php at it.
  */
 
 return [
   // A long random passphrase YOU invent. This is the low-stakes key callers
-  // present (chat / Cowork / Code). It can only trigger the relay's narrow
-  // actions — it is NOT your GitHub token. Rotate it freely.
+  // present (chat / Cowork / Code / the app). It guards this one task board
+  // and nothing else. Rotate it freely.
   'relayKey'  => 'CHANGE-ME-to-a-long-random-relay-key',
 
-  // Your GitHub classic personal-access token with the "gist" scope.
-  // Lives ONLY here, server-side. Never returned by the relay, never logged.
-  'gistToken' => 'ghp_REPLACE_WITH_YOUR_GIST_PAT',
+  // ABSOLUTE path where the JSON documents live — put it OUTSIDE the web
+  // root so the files are never directly reachable over HTTP. Created (0700)
+  // on first request if missing; snapshots land in <dataDir>/snapshots.
+  'dataDir'   => '/home/YOURUSER/viz-data',
 
-  // Optional. If left blank, the relay discovers the gist holding
-  // viz-org-board.json on first call. Set it to skip that lookup.
+  // OPTIONAL — only needed for the one-time ?action=migrate-from-gist pull
+  // of the legacy gist backplane. Safe to delete both lines after migrating.
+  'gistToken' => '',
   'gistId'    => '',
 ];

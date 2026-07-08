@@ -48,19 +48,23 @@ import type { Urgency } from "./types";
 const UI_VERSION_KEY = "viz-org-ui";
 import { availableCredits, badgeById, level, withGame } from "./game";
 import {
-  GistRateLimitError,
+  DEFAULT_RELAY_URL,
+  RelayAuthError,
+  StaleWriteError,
+  SyncBusyError,
   SyncContext,
   clearInbox,
-  findOrCreateGist,
   loadSyncConfig,
+  pullBoard,
+  pullBoardRetrying,
   pullInbox,
   pullReinforcement,
-  pullRemoteRetrying,
   pullStreams,
-  pushFiles,
-  pushRemoteRetrying,
+  pushDocs,
   saveSyncConfig,
+  testRelay,
   useSync,
+  type DocRevs,
   type SyncConfig,
   type SyncStatus,
 } from "./sync";
@@ -378,9 +382,9 @@ function SyncBanner() {
       <div className="syncbanner warn" role="alert">
         <span className="sb-badge">⚠ Not syncing</span>
         <span className="sb-body">
-          GitHub's write limit is maxed out. Your changes are <b>saved on this device</b> but aren't reaching your other
-          machines yet — <b>don't edit on another device</b> until this clears, or its older copy can overwrite this
-          work. Writes resume ~{at} ({approx}).
+          The sync service is temporarily busy. Your changes are <b>saved on this device</b> but aren't reaching your
+          other machines yet — <b>don't edit on another device</b> until this clears, or its older copy can win. Writes
+          resume ~{at} ({approx}).
         </span>
         <span className="sb-clock">{clock}</span>
         <button className="btn" onClick={syncNow}>
@@ -427,6 +431,15 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 3400);
   }, []);
+
+  // A board CAS conflict adopted the other device's newer copy (the board has
+  // no field merge yet) — tell the user their very last edit may need redoing.
+  useEffect(() => {
+    const onConflict = () =>
+      notify("Board updated from another device — showing the latest. Re-check your last change.");
+    window.addEventListener("viz-board-conflict", onConflict);
+    return () => window.removeEventListener("viz-board-conflict", onConflict);
+  }, [notify]);
 
   // Holding pen resurfacing: when a held task's return date arrives, it comes
   // back onto the board — and because that means hours reappearing in the big
@@ -645,20 +658,22 @@ export function App() {
   const latestRs = useRef(rs);
   latestRs.current = rs;
 
-  // When a gist write hits GitHub's per-user gist_update rate limit, pause ALL
-  // writers (board + streams) until the bucket refills — otherwise every change
-  // keeps firing PATCHes that just re-pin the limit at zero. Epoch ms; 0 = open.
-  // The ref drives the flush scheduling; the mirrored STATE drives the visible
-  // warning (a ref alone wouldn't re-render). `unsynced` is true whenever local
-  // changes exist that haven't been confirmed onto the gist — the real
-  // data-loss signal, since whole-file LWW clobbers unsynced work on switch.
+  // Last-seen revision per relay document. Pushes send these as the CAS base;
+  // a 409 means another device wrote first and we merge instead of clobbering.
+  const revs = useRef<DocRevs>({ board: 0, streams: 0, reinforcement: 0 });
+
+  // When the relay throttles (burst limit / host trouble), pause writers until
+  // it clears. The ref drives flush scheduling; the mirrored STATE drives the
+  // visible warning (a ref alone wouldn't re-render). `unsynced` is true
+  // whenever local changes exist that haven't been confirmed pushed — the real
+  // data-loss signal for multi-machine use.
   const writesPausedUntil = useRef(0);
   const [pausedUntil, setPausedUntil] = useState(0);
   const [unsynced, setUnsynced] = useState(false);
   const noteRateLimit = (e: unknown) => {
-    if (e instanceof GistRateLimitError) {
-      writesPausedUntil.current = (e.resetAt ?? Math.floor(Date.now() / 1000) + 60) * 1000;
-      setPausedUntil(writesPausedUntil.current);
+    if (e instanceof SyncBusyError) {
+      writesPausedUntil.current = e.resetAt;
+      setPausedUntil(e.resetAt);
     }
   };
 
@@ -700,8 +715,9 @@ export function App() {
     }
     let cancelled = false;
     pullReinforcement(config)
-      .then((remote) => {
+      .then(({ rs: remote, rev }) => {
         if (cancelled) return;
+        revs.current.reinforcement = rev;
         if (remote) dispatchR({ type: "ingest", remote });
         else dispatchR({ type: "seed", legacy: withGame(latest.current.game) });
       })
@@ -730,8 +746,10 @@ export function App() {
     }
     let cancelled = false;
     pullStreams(config)
-      .then((remote) => {
-        if (!cancelled && remote.length) dispatchStreams({ type: "ingest", streams: remote });
+      .then(({ streams: remote, rev }) => {
+        if (cancelled) return;
+        revs.current.streams = rev;
+        if (remote.length) dispatchStreams({ type: "ingest", streams: remote });
       })
       .catch(() => {})
       .finally(() => {
@@ -764,31 +782,77 @@ export function App() {
     if (!d.board && !d.streams && !d.reinf) return;
     dirty.current = { board: false, streams: false, reinf: false };
     setStatus({ phase: "syncing" });
-    pushFiles(config, {
-      board: d.board ? latest.current : undefined,
-      streams: d.streams ? latestStreams.current : undefined,
-      reinforcement: d.reinf ? latestRs.current : undefined,
-    })
-      .then(() => {
+
+    const remark = () => {
+      dirty.current = {
+        board: dirty.current.board || d.board,
+        streams: dirty.current.streams || d.streams,
+        reinf: dirty.current.reinf || d.reinf,
+      };
+    };
+    const reschedule = (ms: number) => {
+      if (flushTimer.current) window.clearTimeout(flushTimer.current);
+      flushTimer.current = window.setTimeout(() => flushDirty(), ms);
+    };
+
+    pushDocs(
+      config,
+      {
+        board: d.board ? latest.current : undefined,
+        streams: d.streams ? latestStreams.current : undefined,
+        reinforcement: d.reinf ? latestRs.current : undefined,
+      },
+      revs.current,
+    )
+      .then((out) => {
+        revs.current = { ...revs.current, ...out };
         setStatus({ phase: "ok", at: Date.now() });
         setPausedUntil(0);
-        // Only truly clean if nothing new was dirtied while this PATCH was in
-        // flight.
+        // Only truly clean if nothing new was dirtied while the push flew.
         if (!dirty.current.board && !dirty.current.streams && !dirty.current.reinf) setUnsynced(false);
       })
-      .catch((e) => {
-        // Whatever we tried to send is still dirty; retry after the pause (or
-        // a short beat for transient network trouble).
-        dirty.current = {
-          board: dirty.current.board || d.board,
-          streams: dirty.current.streams || d.streams,
-          reinf: dirty.current.reinf || d.reinf,
-        };
+      .catch(async (e) => {
+        remark();
+        // CAS miss: another device wrote first. Pull, reconcile, retry. (Docs
+        // that landed before the stale one keep stale local revs — their next
+        // push 409s once and self-heals through this same path.)
+        if (e instanceof StaleWriteError) {
+          // The 409's rev is authoritative (POST responses bypass any cache);
+          // the re-pulls below then read fresh content at/after that rev.
+          revs.current[e.doc] = e.rev;
+          try {
+            if (e.doc === "board") {
+              const { state: remote, rev } = await pullBoard(config);
+              revs.current.board = rev;
+              if (remote) {
+                // The board has no field merge (known v-next) — adopt the
+                // newer copy and SAY SO, instead of silently clobbering it.
+                dispatch({ type: "replaceState", state: remote });
+                window.dispatchEvent(new CustomEvent("viz-board-conflict"));
+                dirty.current.board = false;
+              }
+            } else if (e.doc === "streams") {
+              const { streams: remote, rev } = await pullStreams(config);
+              revs.current.streams = rev;
+              if (remote.length) dispatchStreams({ type: "ingest", streams: remote });
+              dirty.current.streams = true; // merged result still needs pushing
+            } else if (e.doc === "reinforcement") {
+              const { rs: remote, rev } = await pullReinforcement(config);
+              revs.current.reinforcement = rev;
+              if (remote) dispatchR({ type: "ingest", remote });
+              dirty.current.reinf = true;
+            }
+          } catch {
+            /* pull failed — the retry below re-attempts the whole cycle */
+          }
+          setStatus({ phase: "syncing" });
+          reschedule(400);
+          return;
+        }
         noteRateLimit(e);
         setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" });
-        const retry = Math.max(writesPausedUntil.current - Date.now() + 500, 5000);
-        if (flushTimer.current) window.clearTimeout(flushTimer.current);
-        flushTimer.current = window.setTimeout(() => flushDirty(), retry);
+        if (e instanceof RelayAuthError) return; // wrong key — retrying won't help
+        reschedule(Math.max(writesPausedUntil.current - Date.now() + 500, 5000));
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config]);
@@ -851,10 +915,16 @@ export function App() {
     setStatus({ phase: "syncing" });
     (async () => {
       try {
-        const remote = await pullRemoteRetrying(config);
+        const { state: remote, rev } = await pullBoardRetrying(config);
         if (cancelled) return;
-        if (remote) dispatch({ type: "replaceState", state: remote });
-        else await pushRemoteRetrying(config, latest.current);
+        revs.current.board = rev;
+        if (remote) {
+          dispatch({ type: "replaceState", state: remote });
+        } else {
+          // Empty store — seed it with this device's board.
+          const out = await pushDocs(config, { board: latest.current }, revs.current);
+          revs.current = { ...revs.current, ...out };
+        }
         if (!cancelled) {
           setStatus({ phase: "ok", at: Date.now() });
           ingestInbox().catch(() => {});
@@ -878,7 +948,7 @@ export function App() {
   // explicit "Check now" button can show an error.
   const ingestInbox = useCallback(async (): Promise<number> => {
     if (!config) return 0;
-    const raw = await pullInbox(config);
+    const { raw, rev: inboxRev } = await pullInbox(config);
     if (!raw) return 0;
     let fresh = 0;
     try {
@@ -903,7 +973,9 @@ export function App() {
       fresh = candidates.filter((c) => !seen.has(c.id) && !inInbox.has(c.id)).length;
       if (candidates.length) dispatch({ type: "pullEmail", candidates });
     } finally {
-      await clearInbox(config);
+      // CAS-guarded: if chat dropped new candidates between our pull and this
+      // clear, the clear is skipped and the next drain picks them up.
+      await clearInbox(config, inboxRev);
     }
     return fresh;
   }, [config]);
@@ -945,14 +1017,16 @@ export function App() {
     };
   }, [config, pushNow, ingestInbox]);
 
-  const connect = useCallback((token: string) => {
+  const connect = useCallback((key: string, url?: string) => {
+    const relayUrl = (url ?? DEFAULT_RELAY_URL).trim();
     setStatus({ phase: "syncing" });
-    findOrCreateGist(token, latest.current)
-      .then((cfg) => {
+    testRelay(relayUrl, key)
+      .then(() => {
+        const cfg = { url: relayUrl, key };
         saveSyncConfig(cfg);
         setConfig(cfg);
       })
-      .catch((e) => setStatus({ phase: "error", message: e instanceof Error ? e.message : "Sync failed" }));
+      .catch((e) => setStatus({ phase: "error", message: e instanceof Error ? e.message : "Couldn't reach the relay" }));
   }, []);
   const disconnect = useCallback(() => {
     saveSyncConfig(null);

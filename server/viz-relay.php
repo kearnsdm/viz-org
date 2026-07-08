@@ -1,34 +1,40 @@
 <?php
 /**
- * viz-relay.php — secret-free task relay for viz-org.
+ * viz-relay.php v2 — viz-org's sync backplane, hosted on YOUR server.
  *
- * Lets Claude (chat / Cowork / Code) push tasks into your viz-org gist and read
- * board + checklist-stream state WITHOUT ever handling your GitHub token. The
- * powerful gist PAT lives only in viz-relay-config.php on this server. Callers
- * present a separate, low-stakes RELAY KEY that can do nothing but the narrow
- * actions below — if it leaks, the blast radius is "someone could drop tasks in
- * your inbox," not "someone owns your GitHub."
+ * v2 changes the architecture: the JSON files LIVE HERE, on this host's disk,
+ * not in a GitHub gist. That removes GitHub's small shared gist-write budget
+ * (100/hr — the thing that silently ate cross-machine edits), removes the
+ * expiring PAT from the app entirely, and makes real concurrency control
+ * possible (gists could only do blind whole-file replace).
  *
- * This file is safe to commit (the repo is public): it contains no secrets.
- * The token lives in viz-relay-config.php, which is gitignored.
+ * Callers present the low-stakes RELAY KEY. If it leaks, the blast radius is
+ * "someone can read/write this one task board" — rotate it freely. This file
+ * is safe to commit; secrets live in viz-relay-config.php (gitignored).
  *
- * Actions (all require the relay key via the X-Viz-Key header, preferred, or
- * a ?key= query param — the header keeps the key out of server access logs):
- *   GET  ?action=board         -> current board JSON ({v,state,savedAt}) or {state:null}
- *   GET  ?action=streams       -> current checklist streams JSON or {v:3,streams:[]}
- *   POST ?action=streams       -> replace streams file with the posted JSON body
- *   GET  ?action=analysis      -> the contract-ledger / findings file
- *   POST ?action=analysis      -> replace the analysis file (chat-authored)
- *   GET  ?action=reinforcement -> the reinforcement layer's state (points,
- *                                 level, events, badges)
- *   POST ?action=reinforcement -> replace the reinforcement file. NOTE: the
- *                                 app merges by event id; sessions should GET,
- *                                 append their events, and POST the union.
- *   POST ?action=append        -> body {candidates:[CandidateTask,...]}; merges
- *                                 into the inbox drop box, deduped by id
+ * Actions (auth: X-Viz-Key header preferred, or ?key= query param):
+ *   GET  ?action=ping          -> {ok:true, store:"local"} — connection test
+ *   GET  ?action=board|streams|reinforcement|analysis|inbox
+ *        -> the file's JSON (or a sensible empty default), with the current
+ *           revision in the X-Viz-Rev response header
+ *   POST ?action=board|streams|reinforcement|analysis|inbox
+ *        -> whole-file replace with the posted JSON body (stored VERBATIM
+ *           after validation — PHP re-encoding would corrupt {} to []).
+ *           OPTIMISTIC CONCURRENCY: send X-Viz-Rev-Base with the revision you
+ *           pulled. If the file moved on, you get 409 {error:"stale", rev:N}
+ *           — re-pull, merge, retry. Omit the header to force (legacy/chat).
+ *   POST ?action=append        -> body {candidates:[CandidateTask,...]};
+ *                                 merges into the inbox, deduped by id
+ *   POST ?action=migrate-from-gist
+ *        -> one-time cutover: pulls all five files from the configured gist
+ *           into local storage. Refuses if a board already exists here
+ *           (add ?force=1 to overwrite). After this, the gist is a frozen
+ *           archive and nothing here touches GitHub again.
  *
- * Whole-file POSTs store the posted body VERBATIM after validating it parses
- * as JSON — decoding/re-encoding in PHP would corrupt empty objects ({}→[]).
+ * Storage: config 'dataDir' (recommended: OUTSIDE the web root, e.g.
+ * /home/<user>/viz-data). Writes are flock-guarded and atomic (tmp+rename);
+ * every write bumps the file's revision; rotating snapshots (every ≥6h per
+ * file, pruned after 21 days) replace the gist's version history.
  *
  * SETUP is documented at the bottom of this file and in server/README.md.
  */
@@ -38,19 +44,26 @@ declare(strict_types=1);
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, X-Viz-Key');
+header('Access-Control-Allow-Headers: Content-Type, X-Viz-Key, X-Viz-Rev-Base');
+header('Access-Control-Expose-Headers: X-Viz-Rev');
 header('X-Content-Type-Options: nosniff');
+// Sync state must NEVER be cached: the host's default mod_expires policy
+// otherwise stamps responses cacheable for days, which feeds devices stale
+// boards and stale revision numbers (= endless CAS conflicts).
+header('Cache-Control: no-store, max-age=0');
+header('Pragma: no-cache');
+header('Expires: 0');
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'OPTIONS') { http_response_code(204); exit; }
 
-// --- load config (token + relay key live here, NOT in the public repo) -----
+// --- load config (relay key + storage dir; gist token only for migration) ---
 $cfgPath = __DIR__ . '/viz-relay-config.php';
 if (!is_file($cfgPath)) {
   http_response_code(500);
   echo json_encode(['error' => 'relay not configured']);
   exit;
 }
-/** @var array{relayKey:string,gistToken:string,gistId?:string} $CFG */
+/** @var array{relayKey:string,gistToken?:string,gistId?:string,dataDir?:string} $CFG */
 $CFG = require $cfgPath;
 
 // --- auth: constant-time check of the relay key ----------------------------
@@ -64,10 +77,26 @@ if (
   exit;
 }
 
+// --- storage layout ----------------------------------------------------------
+$DATA_DIR = (isset($CFG['dataDir']) && is_string($CFG['dataDir']) && $CFG['dataDir'] !== '')
+  ? rtrim($CFG['dataDir'], '/')
+  : __DIR__ . '/viz-data';
+$SNAP_DIR = $DATA_DIR . '/snapshots';
+foreach ([$DATA_DIR, $SNAP_DIR] as $d) {
+  if (!is_dir($d) && !@mkdir($d, 0700, true)) {
+    http_response_code(500);
+    echo json_encode(['error' => 'storage dir unavailable']);
+    exit;
+  }
+}
+// If the data dir ended up inside a web root, refuse to serve its files.
+$ht = $DATA_DIR . '/.htaccess';
+if (!is_file($ht)) @file_put_contents($ht, "Require all denied\n");
+
 // --- light rate limit: fixed 60s window, flock-guarded ---------------------
-$RATE_MAX = 60;
+$RATE_MAX = 120;
 $RATE_WINDOW = 60;
-$rlPath = __DIR__ . '/viz-relay-rate.json';
+$rlPath = $DATA_DIR . '/rate.json';
 $now = time();
 $fp = @fopen($rlPath, 'c+');
 if ($fp) {
@@ -80,6 +109,7 @@ if ($fp) {
     flock($fp, LOCK_UN);
     fclose($fp);
     http_response_code(429);
+    header('Retry-After: 30');
     echo json_encode(['error' => 'rate limited']);
     exit;
   }
@@ -91,14 +121,143 @@ if ($fp) {
   fclose($fp);
 }
 
-// --- GitHub gist API helper -------------------------------------------------
+// --- the document store -------------------------------------------------------
+// One JSON file per document + a sidecar .rev integer. All mutation happens
+// under an exclusive flock on the doc's .lock file; content lands via
+// tmp+rename so a crash can never leave a half-written file.
+
+const DOCS = [
+  'board'         => 'viz-org-board.json',
+  'streams'       => 'viz-org-streams.json',
+  'reinforcement' => 'viz-org-reinforcement.json',
+  'analysis'      => 'viz-org-analysis.json',
+  'inbox'         => 'viz-org-inbox.json',
+];
+
+/** Empty-store defaults, matching what the app/chat expect from day one. */
+const DOC_DEFAULTS = [
+  'board'         => '{"state":null}',
+  'streams'       => '{"v":3,"streams":[]}',
+  'reinforcement' => '{"v":1,"kind":"viz-org-reinforcement"}',
+  'analysis'      => '{"v":1,"kind":"viz-org-analysis"}',
+  'inbox'         => '[]',
+];
+
+/** Snapshot cadence + retention. */
+const SNAP_MIN_INTERVAL = 6 * 3600;
+const SNAP_KEEP_SECONDS = 21 * 24 * 3600;
+
+function docPaths(string $doc): array {
+  global $DATA_DIR;
+  $file = DOCS[$doc];
+  return [
+    'data' => "$DATA_DIR/$file",
+    'rev'  => "$DATA_DIR/$file.rev",
+    'lock' => "$DATA_DIR/$file.lock",
+  ];
+}
+
+function docLock(string $doc) {
+  $p = docPaths($doc);
+  $h = fopen($p['lock'], 'c');
+  if ($h === false) return null;
+  flock($h, LOCK_EX);
+  return $h;
+}
+
+function docUnlock($h): void {
+  if ($h) {
+    flock($h, LOCK_UN);
+    fclose($h);
+  }
+}
+
+/** @return array{content: ?string, rev: int} */
+function docRead(string $doc): array {
+  $p = docPaths($doc);
+  $content = is_file($p['data']) ? file_get_contents($p['data']) : null;
+  $rev = is_file($p['rev']) ? (int) trim((string) file_get_contents($p['rev'])) : 0;
+  return ['content' => $content === false ? null : $content, 'rev' => $rev];
+}
+
+function snapshotMaybe(string $doc, string $content): void {
+  global $SNAP_DIR;
+  $file = DOCS[$doc];
+  $latest = 0;
+  foreach (glob("$SNAP_DIR/$file.*.json") ?: [] as $s) {
+    $latest = max($latest, (int) filemtime($s));
+  }
+  $now = time();
+  if ($now - $latest < SNAP_MIN_INTERVAL) return;
+  @file_put_contents("$SNAP_DIR/$file." . date('Ymd-His', $now) . '.json', $content);
+  foreach (glob("$SNAP_DIR/$file.*.json") ?: [] as $s) {
+    if ($now - (int) filemtime($s) > SNAP_KEEP_SECONDS) @unlink($s);
+  }
+}
+
+/**
+ * Write a document. $baseRev null = unconditional (legacy/chat callers);
+ * otherwise the write only lands if the stored revision still equals it.
+ * @return array{ok: bool, stale?: bool, rev: int}
+ */
+function docWrite(string $doc, string $content, ?int $baseRev): array {
+  $p = docPaths($doc);
+  $h = docLock($doc);
+  if ($h === null) return ['ok' => false, 'rev' => 0];
+  $cur = docRead($doc);
+  if ($baseRev !== null && $baseRev !== $cur['rev']) {
+    docUnlock($h);
+    return ['ok' => false, 'stale' => true, 'rev' => $cur['rev']];
+  }
+  $tmp = $p['data'] . '.tmp';
+  $ok = @file_put_contents($tmp, $content) !== false && @rename($tmp, $p['data']);
+  if (!$ok) {
+    @unlink($tmp);
+    docUnlock($h);
+    return ['ok' => false, 'rev' => $cur['rev']];
+  }
+  $newRev = $cur['rev'] + 1;
+  @file_put_contents($p['rev'], (string) $newRev);
+  snapshotMaybe($doc, $content);
+  docUnlock($h);
+  return ['ok' => true, 'rev' => $newRev];
+}
+
+// --- request helpers -----------------------------------------------------------
+
+function readJsonBody(int $maxBytes = 1048576): ?array {
+  $raw = file_get_contents('php://input');
+  if ($raw === false || strlen($raw) > $maxBytes) return null;
+  $j = json_decode($raw, true);
+  return is_array($j) ? $j : null;
+}
+
+/** Validate the body parses as JSON, return it RAW to store verbatim. */
+function readRawJsonBody(int $maxBytes = 1048576): ?string {
+  $raw = file_get_contents('php://input');
+  if ($raw === false || $raw === '' || strlen($raw) > $maxBytes) return null;
+  json_decode($raw);
+  return json_last_error() === JSON_ERROR_NONE ? $raw : null;
+}
+
+function baseRevHeader(): ?int {
+  $v = $_SERVER['HTTP_X_VIZ_REV_BASE'] ?? null;
+  if ($v === null || $v === '' || $v === '*') return null;
+  return ctype_digit((string) $v) ? (int) $v : null;
+}
+
+// Keep multibyte text readable where the relay itself re-encodes (inbox merge).
+const RELAY_JSON = JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE;
+
+// --- gist client (MIGRATION ONLY — nothing else touches GitHub in v2) ----------
+
 function gh(string $method, string $path, array $cfg, ?string $body = null): array {
   $ch = curl_init("https://api.github.com$path");
   $headers = [
-    'Authorization: Bearer ' . $cfg['gistToken'],
+    'Authorization: Bearer ' . ($cfg['gistToken'] ?? ''),
     'Accept: application/vnd.github+json',
     'X-GitHub-Api-Version: 2022-11-28',
-    'User-Agent: viz-relay', // GitHub requires a User-Agent
+    'User-Agent: viz-relay',
   ];
   if ($body !== null) $headers[] = 'Content-Type: application/json';
   curl_setopt_array($ch, [
@@ -115,16 +274,6 @@ function gh(string $method, string $path, array $cfg, ?string $body = null): arr
   return ['status' => $status, 'json' => json_decode((string) $resp, true)];
 }
 
-function resolveGistId(array $cfg): ?string {
-  if (!empty($cfg['gistId']) && is_string($cfg['gistId'])) return $cfg['gistId'];
-  $r = gh('GET', '/gists?per_page=100', $cfg);
-  if ($r['status'] !== 200 || !is_array($r['json'])) return null;
-  foreach ($r['json'] as $g) {
-    if (isset($g['files']['viz-org-board.json'])) return (string) $g['id'];
-  }
-  return null;
-}
-
 function readGistFile(array $cfg, string $id, string $file): ?string {
   $r = gh('GET', "/gists/$id", $cfg);
   if ($r['status'] !== 200 || !is_array($r['json'])) return null;
@@ -138,104 +287,40 @@ function readGistFile(array $cfg, string $id, string $file): ?string {
   return $content;
 }
 
-function writeGistFile(array $cfg, string $id, string $file, string $content): bool {
-  $body = json_encode(['files' => [$file => ['content' => $content]]]);
-  $r = gh('PATCH', "/gists/$id", $cfg, (string) $body);
-  return $r['status'] === 200;
-}
-
-function readJsonBody(int $maxBytes = 262144): ?array {
-  $raw = file_get_contents('php://input');
-  if ($raw === false || strlen($raw) > $maxBytes) return null;
-  $j = json_decode($raw, true);
-  return is_array($j) ? $j : null;
-}
-
-/**
- * For whole-file replace actions: validate that the body is JSON, then return
- * the RAW body to store verbatim. Decoding and re-encoding through PHP would
- * corrupt empty objects ({} becomes []) — fatal for maps like the
- * reinforcement badges — and \u-escape multibyte text.
- */
-function readRawJsonBody(int $maxBytes = 262144): ?string {
-  $raw = file_get_contents('php://input');
-  if ($raw === false || $raw === '' || strlen($raw) > $maxBytes) return null;
-  json_decode($raw);
-  return json_last_error() === JSON_ERROR_NONE ? $raw : null;
-}
-
-// --- dispatch ---------------------------------------------------------------
-$BOARD = 'viz-org-board.json';
-$INBOX = 'viz-org-inbox.json';
-$STREAMS = 'viz-org-streams.json';
-$ANALYSIS = 'viz-org-analysis.json';
-$REINF = 'viz-org-reinforcement.json';
-
-// Keep multibyte text (em-dashes, emoji glyphs) readable in the gist files
-// instead of \uXXXX-escaping it.
-const RELAY_JSON = JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE;
+// --- dispatch --------------------------------------------------------------------
 
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $action = (string) ($_GET['action'] ?? '');
 
-$id = resolveGistId($CFG);
-if ($id === null) {
-  http_response_code(502);
-  echo json_encode(['error' => 'could not locate gist']);
+if ($method === 'GET' && $action === 'ping') {
+  $revs = [];
+  foreach (array_keys(DOCS) as $doc) $revs[$doc] = docRead($doc)['rev'];
+  echo json_encode(['ok' => true, 'store' => 'local', 'revs' => $revs]);
   exit;
 }
 
-if ($method === 'GET' && $action === 'board') {
-  $c = readGistFile($CFG, $id, $BOARD);
-  echo ($c !== null && trim($c) !== '') ? $c : json_encode(['state' => null]);
+// GET any document.
+if ($method === 'GET' && isset(DOCS[$action])) {
+  $r = docRead($action);
+  header('X-Viz-Rev: ' . $r['rev']);
+  echo ($r['content'] !== null && trim($r['content']) !== '') ? $r['content'] : DOC_DEFAULTS[$action];
   exit;
 }
 
-if ($method === 'GET' && $action === 'streams') {
-  $c = readGistFile($CFG, $id, $STREAMS);
-  echo ($c !== null && trim($c) !== '') ? $c : json_encode(['v' => 3, 'streams' => []]);
-  exit;
-}
-
-if ($method === 'POST' && $action === 'streams') {
+// POST whole-file replace for any document, with optional CAS.
+if ($method === 'POST' && isset(DOCS[$action])) {
   $raw = readRawJsonBody();
   if ($raw === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
-  $ok = writeGistFile($CFG, $id, $STREAMS, $raw);
-  http_response_code($ok ? 200 : 502);
-  echo json_encode($ok ? ['ok' => true] : ['error' => 'upstream write failed']);
-  exit;
-}
-
-if ($method === 'GET' && $action === 'analysis') {
-  $c = readGistFile($CFG, $id, $ANALYSIS);
-  echo ($c !== null && trim($c) !== '') ? $c : json_encode(['v' => 1, 'kind' => 'viz-org-analysis']);
-  exit;
-}
-
-if ($method === 'POST' && $action === 'analysis') {
-  $raw = readRawJsonBody();
-  if ($raw === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
-  $ok = writeGistFile($CFG, $id, $ANALYSIS, $raw);
-  http_response_code($ok ? 200 : 502);
-  echo json_encode($ok ? ['ok' => true] : ['error' => 'upstream write failed']);
-  exit;
-}
-
-// The reinforcement layer's state file (points, level, events, badges).
-// App-owned read/write; chat sessions may also read it and append review
-// events. Same shape of handlers as the analysis file.
-if ($method === 'GET' && $action === 'reinforcement') {
-  $c = readGistFile($CFG, $id, $REINF);
-  echo ($c !== null && trim($c) !== '') ? $c : json_encode(['v' => 1, 'kind' => 'viz-org-reinforcement']);
-  exit;
-}
-
-if ($method === 'POST' && $action === 'reinforcement') {
-  $raw = readRawJsonBody();
-  if ($raw === null) { http_response_code(400); echo json_encode(['error' => 'invalid or oversized JSON']); exit; }
-  $ok = writeGistFile($CFG, $id, $REINF, $raw);
-  http_response_code($ok ? 200 : 502);
-  echo json_encode($ok ? ['ok' => true] : ['error' => 'upstream write failed']);
+  $w = docWrite($action, $raw, baseRevHeader());
+  if (!empty($w['stale'])) {
+    http_response_code(409);
+    header('X-Viz-Rev: ' . $w['rev']);
+    echo json_encode(['error' => 'stale', 'rev' => $w['rev']]);
+    exit;
+  }
+  if (!$w['ok']) { http_response_code(500); echo json_encode(['error' => 'write failed']); exit; }
+  header('X-Viz-Rev: ' . $w['rev']);
+  echo json_encode(['ok' => true, 'rev' => $w['rev']]);
   exit;
 }
 
@@ -257,9 +342,10 @@ if ($method === 'POST' && $action === 'append') {
   }
   if (!$valid) { http_response_code(400); echo json_encode(['error' => 'no valid candidates']); exit; }
 
-  // merge into the existing inbox, deduped by id (app does final dedupe too)
-  $existingRaw = readGistFile($CFG, $id, $INBOX);
-  $existing = $existingRaw ? json_decode($existingRaw, true) : [];
+  // Read-merge-write under the inbox lock so concurrent appends can't race.
+  $h = docLock('inbox');
+  $cur = docRead('inbox');
+  $existing = $cur['content'] ? json_decode($cur['content'], true) : [];
   if (!is_array($existing)) $existing = [];
   $byId = [];
   foreach ($existing as $e) {
@@ -267,12 +353,43 @@ if ($method === 'POST' && $action === 'append') {
   }
   foreach ($valid as $c) { $byId[$c['id']] = $c; }
   $merged = array_values($byId);
+  docUnlock($h); // docWrite re-locks; the pre-merge lock only shrank the race window
+  $w = docWrite('inbox', (string) json_encode($merged, RELAY_JSON), null);
+  http_response_code($w['ok'] ? 200 : 500);
+  if ($w['ok']) header('X-Viz-Rev: ' . $w['rev']);
+  echo json_encode($w['ok']
+    ? ['ok' => true, 'added' => count($valid), 'inbox' => count($merged), 'rev' => $w['rev']]
+    : ['error' => 'write failed']);
+  exit;
+}
 
-  $ok = writeGistFile($CFG, $id, $INBOX, (string) json_encode($merged, RELAY_JSON));
-  http_response_code($ok ? 200 : 502);
-  echo json_encode($ok
-    ? ['ok' => true, 'added' => count($valid), 'inbox' => count($merged)]
-    : ['error' => 'upstream write failed']);
+// One-time cutover from the gist. Idempotent: refuses when a board already
+// exists locally unless ?force=1.
+if ($method === 'POST' && $action === 'migrate-from-gist') {
+  if (empty($CFG['gistToken']) || empty($CFG['gistId'])) {
+    http_response_code(400);
+    echo json_encode(['error' => 'gistToken/gistId not configured — nothing to migrate from']);
+    exit;
+  }
+  $existing = docRead('board');
+  if ($existing['content'] !== null && trim($existing['content']) !== '' && ($_GET['force'] ?? '') !== '1') {
+    http_response_code(409);
+    echo json_encode(['error' => 'store already has data; pass force=1 to overwrite', 'boardRev' => $existing['rev']]);
+    exit;
+  }
+  $report = [];
+  foreach (DOCS as $doc => $file) {
+    $content = readGistFile($CFG, (string) $CFG['gistId'], $file);
+    if ($content === null || trim($content) === '') {
+      $report[$doc] = ['migrated' => false, 'reason' => 'absent or empty in gist'];
+      continue;
+    }
+    $w = docWrite($doc, $content, null);
+    $report[$doc] = $w['ok']
+      ? ['migrated' => true, 'bytes' => strlen($content), 'rev' => $w['rev']]
+      : ['migrated' => false, 'reason' => 'local write failed'];
+  }
+  echo json_encode(['ok' => true, 'report' => $report]);
   exit;
 }
 
@@ -284,14 +401,17 @@ echo json_encode(['error' => 'unknown action']);
  * ---------------------------------
  * 1. Copy viz-relay-config.sample.php -> viz-relay-config.php and fill in:
  *      - relayKey  : a long random passphrase you invent (the low-stakes key)
- *      - gistToken : your GitHub classic PAT with the "gist" scope
- *      - gistId    : optional; auto-discovered if blank
- *    viz-relay-config.php is gitignored — never commit it. Even better, move it
- *    outside the web root and update the $cfgPath above.
- * 2. Upload viz-relay.php (and viz-relay-config.php) under your web directory,
- *    e.g. https://devinkearns.com/viz/viz-relay.php
- * 3. Confirm it serves over HTTPS. Test:
- *      curl -s -H "X-Viz-Key: <relayKey>" "https://.../viz-relay.php?action=board"
- * 4. Give the relay URL + relayKey (the low-stakes key, not the PAT) to whatever
- *    surface is pushing tasks. The URL is not secret and can live in CLAUDE.md.
+ *      - dataDir   : ABSOLUTE path OUTSIDE the web root for the JSON store,
+ *                    e.g. /home/youruser/viz-data (created automatically)
+ *      - gistToken + gistId : only needed for the one-time migration; can be
+ *                    deleted from the config afterwards
+ *    viz-relay-config.php is gitignored — never commit it.
+ * 2. Upload viz-relay.php (and the config) under your web directory,
+ *    e.g. https://example.com/viz/viz-relay.php
+ * 3. Migrate the existing gist data (once):
+ *      curl -s -X POST -H "X-Viz-Key: <relayKey>" \
+ *        "https://.../viz-relay.php?action=migrate-from-gist"
+ * 4. Point the app at it: Backup / Sync -> paste the relay key. The app pulls
+ *    and pushes through this endpoint from then on; GitHub is out of the loop.
+ * 5. Snapshots land in <dataDir>/snapshots (6h cadence, 21-day retention).
  */

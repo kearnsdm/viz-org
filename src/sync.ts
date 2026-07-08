@@ -2,14 +2,24 @@ import { createContext, useContext } from "react";
 import type { AnalysisDoc, AppState, Stream } from "./types";
 import type { ReinforcementState } from "./reinforcement";
 
-// Cross-device sync via a private GitHub Gist. GitHub's API sends proper CORS
-// headers, so this connects reliably from the app's origin — no self-hosted
-// server, no .htaccess. Auth is a personal access token with the "gist" scope,
-// stored only in this browser. The whole board lives in one secret gist.
+// Cross-device sync via the viz-relay on Devin's own hosting (v2 backplane).
+// The relay owns the JSON documents on its disk — GitHub (and its small
+// shared gist-write budget, and the expiring PAT) is out of the loop
+// entirely; the legacy gist is a frozen archive.
+//
+// Concurrency: every document carries a REVISION. Pulls capture it; pushes
+// send it back as X-Viz-Rev-Base. If another device wrote in between, the
+// relay answers 409 ("stale") instead of letting the newer copy be silently
+// overwritten — the caller then re-pulls, merges (streams/reinforcement have
+// real mergers; the board adopts the newer copy WITH a visible notice), and
+// retries. That turns yesterday's silent multi-machine clobber into either a
+// clean merge or a one-edit loss that announces itself.
+
+export const DEFAULT_RELAY_URL = "https://www.devinkearns.com/viz/viz-relay.php";
 
 export interface SyncConfig {
-  token: string;
-  gistId: string;
+  url: string;
+  key: string;
 }
 
 export interface SyncStatus {
@@ -18,21 +28,37 @@ export interface SyncStatus {
   message?: string;
 }
 
-const SYNC_CFG_KEY = "viz-org-sync-v2";
-const GIST_FILE = "viz-org-board.json";
-const INBOX_FILE = "viz-org-inbox.json";
-const GIST_DESC = "viz-org board (synced) — do not delete";
+/** Per-document revisions, as last seen from the relay. */
+export interface DocRevs {
+  board: number;
+  streams: number;
+  reinforcement: number;
+}
+
+const SYNC_CFG_KEY = "viz-org-sync-v3";
+/** The pre-relay config key (gist PAT era) — read only to detect “needs reconnect”. */
+const LEGACY_SYNC_CFG_KEY = "viz-org-sync-v2";
 
 export function loadSyncConfig(): SyncConfig | null {
   try {
     const raw = localStorage.getItem(SYNC_CFG_KEY);
     if (!raw) return null;
     const c = JSON.parse(raw);
-    if (c && typeof c.token === "string" && typeof c.gistId === "string") return c;
+    if (c && typeof c.url === "string" && typeof c.key === "string") return c;
   } catch {
     /* ignore */
   }
   return null;
+}
+
+/** True when this device synced under the old gist backplane and needs the
+ * one-time relay-key reconnect. */
+export function hasLegacyGistConfig(): boolean {
+  try {
+    return !!localStorage.getItem(LEGACY_SYNC_CFG_KEY) && !localStorage.getItem(SYNC_CFG_KEY);
+  } catch {
+    return false;
+  }
 }
 
 export function saveSyncConfig(cfg: SyncConfig | null): void {
@@ -44,130 +70,225 @@ export function saveSyncConfig(cfg: SyncConfig | null): void {
   }
 }
 
-/**
- * GitHub meters gist *writes* (resource `gist_update`) in a separate, much
- * smaller per-user bucket than reads (`core`). Under the whole-file
- * last-write-wins sync, a burst of saves can exhaust it — then every PATCH
- * 403s while GETs keep working. This is a rate limit, NOT a bad/scopeless
- * token, so it's surfaced distinctly and callers must NOT retry it (retrying
- * only digs the hole deeper and keeps the bucket pinned at zero).
- */
-export class GistRateLimitError extends Error {
-  readonly resource?: string;
-  /** Epoch seconds when the bucket refills, if GitHub reported it. */
-  readonly resetAt?: number;
-  constructor(resource?: string, resetAt?: number) {
-    const when = resetAt ? ` — resets around ${new Date(resetAt * 1000).toLocaleTimeString()}` : "";
-    super(`GitHub write rate limit reached${resource ? ` (${resource})` : ""}${when}. Reads still work; writes pause until it refills.`);
-    this.name = "GistRateLimitError";
-    this.resource = resource;
-    this.resetAt = resetAt;
+// --- typed failures -----------------------------------------------------------
+
+/** The relay rejected the key — reconnect with the right one. */
+export class RelayAuthError extends Error {
+  constructor() {
+    super("The relay didn't accept that key. Check it in Backup / Sync.");
+    this.name = "RelayAuthError";
   }
 }
 
-async function gh(path: string, token: string, init?: RequestInit): Promise<Response> {
-  const res = await fetch(`https://api.github.com${path}`, {
-    ...init,
+/** Writes are temporarily throttled (relay burst limit or host trouble).
+ * Callers must NOT hot-retry; pause until `resetAt`. */
+export class SyncBusyError extends Error {
+  readonly resetAt: number;
+  constructor(resetAt?: number) {
+    const at = resetAt ?? Date.now() + 45_000;
+    super(`The sync service is busy — writes pause until ${new Date(at).toLocaleTimeString()}.`);
+    this.name = "SyncBusyError";
+    this.resetAt = at;
+  }
+}
+
+/** Another device wrote this document since we pulled it (CAS miss). */
+export class StaleWriteError extends Error {
+  readonly doc: keyof DocRevs;
+  readonly rev: number;
+  constructor(doc: keyof DocRevs, rev: number) {
+    super(`${doc} changed on another device (now rev ${rev})`);
+    this.name = "StaleWriteError";
+    this.doc = doc;
+    this.rev = rev;
+  }
+}
+
+// --- the relay client -----------------------------------------------------------
+
+interface RelayResponse {
+  text: string;
+  rev: number;
+  json: () => unknown;
+}
+
+async function relay(
+  cfg: SyncConfig,
+  action: string,
+  init?: { method?: "GET" | "POST"; body?: string; baseRev?: number },
+): Promise<RelayResponse> {
+  const res = await fetch(`${cfg.url}?action=${encodeURIComponent(action)}`, {
+    method: init?.method ?? "GET",
+    // Belt to the relay's no-store braces: a cached GET here feeds the app a
+    // stale board and a stale revision, which turns every push into a 409.
+    cache: "no-store",
     headers: {
-      Authorization: `Bearer ${token}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      "X-Viz-Key": cfg.key,
+      ...(init?.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      ...(init?.baseRev !== undefined ? { "X-Viz-Rev-Base": String(init.baseRev) } : {}),
     },
+    body: init?.body,
   });
-  if (res.status === 401) throw new Error("GitHub didn't accept that token (401)");
-  if (res.status === 403 || res.status === 429) {
-    const remaining = res.headers.get("x-ratelimit-remaining");
-    const resource = res.headers.get("x-ratelimit-resource") ?? undefined;
-    const reset = Number(res.headers.get("x-ratelimit-reset")) || undefined;
-    // A 0-remaining 403 (or any 429) is a rate limit; a 403 with quota left is a
-    // real permission/scope problem.
-    if (res.status === 429 || remaining === "0") throw new GistRateLimitError(resource, reset);
-    throw new Error("GitHub denied the request — the token may be missing the 'gist' scope (403)");
+  if (res.status === 401) throw new RelayAuthError();
+  if (res.status === 429) {
+    const retry = Number(res.headers.get("Retry-After")) || 45;
+    throw new SyncBusyError(Date.now() + retry * 1000);
   }
-  if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
-  return res;
+  const text = await res.text();
+  if (res.status === 409) {
+    let rev = Number(res.headers.get("X-Viz-Rev")) || 0;
+    try {
+      const j = JSON.parse(text);
+      if (typeof j?.rev === "number") rev = j.rev;
+    } catch {
+      /* header value stands */
+    }
+    throw new StaleWriteError(action as keyof DocRevs, rev);
+  }
+  if (!res.ok) throw new Error(`Sync failed (relay returned ${res.status})`);
+  const rev = Number(res.headers.get("X-Viz-Rev")) || 0;
+  return {
+    text,
+    rev,
+    json: () => {
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    },
+  };
 }
 
-function serialize(state: AppState): string {
+/** Connection test for the Sync dialog — throws RelayAuthError on a bad key. */
+export async function testRelay(url: string, key: string): Promise<void> {
+  const r = await relay({ url, key }, "ping");
+  const j = r.json() as { ok?: boolean } | null;
+  if (!j?.ok) throw new Error("That URL doesn't answer like a viz relay.");
+}
+
+// --- serializers (same envelopes as the gist era, so nothing downstream moves) --
+
+function serializeBoard(state: AppState): string {
   return JSON.stringify({ v: 1, state, savedAt: new Date().toISOString() }, null, 2);
 }
 
-/** Find the existing viz-org gist for this token, or create one seeded with the current board. */
-export async function findOrCreateGist(token: string, state: AppState): Promise<SyncConfig> {
-  const list = await (await gh("/gists?per_page=100", token)).json();
-  const existing = Array.isArray(list)
-    ? list.find((g: { files?: Record<string, unknown> }) => g.files && GIST_FILE in g.files)
-    : null;
-  if (existing) return { token, gistId: existing.id };
-  const created = await (
-    await gh("/gists", token, {
+function serializeStreams(streams: Stream[]): string {
+  return JSON.stringify({ v: 3, streams, savedAt: new Date().toISOString() }, null, 2);
+}
+
+function serializeReinforcement(rs: ReinforcementState): string {
+  return JSON.stringify(rs, null, 2);
+}
+
+// --- pulls (each returns the revision alongside the data) ------------------------
+
+export async function pullBoard(cfg: SyncConfig): Promise<{ state: AppState | null; rev: number }> {
+  const r = await relay(cfg, "board");
+  const parsed = r.json() as { state?: AppState | null } | AppState | null;
+  if (parsed && typeof parsed === "object" && "state" in parsed) {
+    return { state: (parsed.state as AppState | null) ?? null, rev: r.rev };
+  }
+  if (parsed && Array.isArray((parsed as AppState).projects)) return { state: parsed as AppState, rev: r.rev };
+  return { state: null, rev: r.rev };
+}
+
+export async function pullStreams(cfg: SyncConfig): Promise<{ streams: Stream[]; rev: number }> {
+  const r = await relay(cfg, "streams");
+  const parsed = r.json() as { streams?: Stream[] } | Stream[] | null;
+  if (parsed && Array.isArray(parsed)) return { streams: parsed, rev: r.rev };
+  if (parsed && Array.isArray(parsed.streams)) return { streams: parsed.streams, rev: r.rev };
+  return { streams: [], rev: r.rev };
+}
+
+export async function pullReinforcement(
+  cfg: SyncConfig,
+): Promise<{ rs: ReinforcementState | null; rev: number }> {
+  const r = await relay(cfg, "reinforcement");
+  const parsed = r.json() as ReinforcementState | null;
+  if (parsed && parsed.v === 1 && Array.isArray(parsed.events)) return { rs: parsed, rev: r.rev };
+  return { rs: null, rev: r.rev };
+}
+
+export async function pullAnalysis(cfg: SyncConfig): Promise<AnalysisDoc | null> {
+  const r = await relay(cfg, "analysis");
+  const parsed = r.json();
+  return parsed && typeof parsed === "object" ? (parsed as AnalysisDoc) : null;
+}
+
+/** Raw contents of the inbox drop box (null if empty), plus its revision. */
+export async function pullInbox(cfg: SyncConfig): Promise<{ raw: string | null; rev: number }> {
+  const r = await relay(cfg, "inbox");
+  const trimmed = r.text.trim();
+  return { raw: trimmed && trimmed !== "[]" ? trimmed : null, rev: r.rev };
+}
+
+/**
+ * Empty the drop box after ingesting — CAS-guarded so candidates that landed
+ * between the pull and the clear are never erased (a stale clear is skipped;
+ * the next drain picks the newcomers up).
+ */
+export async function clearInbox(cfg: SyncConfig, baseRev: number): Promise<void> {
+  try {
+    await relay(cfg, "inbox", { method: "POST", body: "[]", baseRev });
+  } catch (e) {
+    if (e instanceof StaleWriteError) return; // new candidates arrived — leave them
+    throw e;
+  }
+}
+
+// --- pushes ------------------------------------------------------------------------
+
+export interface DirtyDocs {
+  board?: AppState;
+  streams?: Stream[];
+  reinforcement?: ReinforcementState;
+}
+
+/**
+ * Push the dirty documents, each guarded by its last-seen revision. Documents
+ * push sequentially; the first stale one throws StaleWriteError and the
+ * caller resolves the conflict (merge or adopt) and reflushes. Returns the
+ * updated revisions for everything that landed.
+ */
+export async function pushDocs(cfg: SyncConfig, dirty: DirtyDocs, revs: DocRevs): Promise<Partial<DocRevs>> {
+  const out: Partial<DocRevs> = {};
+  if (dirty.board) {
+    const r = await relay(cfg, "board", { method: "POST", body: serializeBoard(dirty.board), baseRev: revs.board });
+    out.board = r.rev;
+  }
+  if (dirty.streams) {
+    const r = await relay(cfg, "streams", {
       method: "POST",
-      body: JSON.stringify({
-        description: GIST_DESC,
-        public: false,
-        files: { [GIST_FILE]: { content: serialize(state) } },
-      }),
-    })
-  ).json();
-  return { token, gistId: created.id };
-}
-
-/** Fetch the remote board, or null if the gist has nothing usable yet. */
-export async function pullRemote(cfg: SyncConfig): Promise<AppState | null> {
-  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
-  const file = gist.files?.[GIST_FILE];
-  if (!file) return null;
-  let content: string = file.content ?? "";
-  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
-  if (!content.trim()) return null;
-  const parsed = JSON.parse(content);
-  if (parsed && parsed.state) return parsed.state as AppState;
-  if (parsed && Array.isArray(parsed.projects)) return parsed as AppState;
-  return null;
-}
-
-/** Save the whole board to the gist. */
-export async function pushRemote(cfg: SyncConfig, state: AppState): Promise<void> {
-  await gh(`/gists/${cfg.gistId}`, cfg.token, {
-    method: "PATCH",
-    body: JSON.stringify({ files: { [GIST_FILE]: { content: serialize(state) } } }),
-  });
-}
-
-// --- Gist inbox -----------------------------------------------------------
-// A second file in the same private gist acts as a drop box: anything that
-// can write to the gist (e.g. a Claude email scan) leaves candidate tasks
-// there, and the app ingests them into Email Intake on load/focus.
-
-/** Raw contents of the gist inbox drop box, or null if empty/absent. */
-export async function pullInbox(cfg: SyncConfig): Promise<string | null> {
-  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
-  const file = gist.files?.[INBOX_FILE];
-  if (!file) return null;
-  let content: string = file.content ?? "";
-  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
-  const trimmed = content.trim();
-  return trimmed && trimmed !== "[]" ? trimmed : null;
-}
-
-/** Empty the drop box once its contents have been ingested. */
-export async function clearInbox(cfg: SyncConfig): Promise<void> {
-  await gh(`/gists/${cfg.gistId}`, cfg.token, {
-    method: "PATCH",
-    body: JSON.stringify({ files: { [INBOX_FILE]: { content: "[]" } } }),
-  });
+      body: serializeStreams(dirty.streams),
+      baseRev: revs.streams,
+    });
+    out.streams = r.rev;
+  }
+  if (dirty.reinforcement) {
+    const r = await relay(cfg, "reinforcement", {
+      method: "POST",
+      body: serializeReinforcement(dirty.reinforcement),
+      baseRev: revs.reinforcement,
+    });
+    out.reinforcement = r.rev;
+  }
+  return out;
 }
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export async function pullRemoteRetrying(cfg: SyncConfig, attempts = 3): Promise<AppState | null> {
+/** Initial board pull with retries for transient blips (never retries auth/busy). */
+export async function pullBoardRetrying(
+  cfg: SyncConfig,
+  attempts = 3,
+): Promise<{ state: AppState | null; rev: number }> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
     try {
-      return await pullRemote(cfg);
+      return await pullBoard(cfg);
     } catch (e) {
-      if (e instanceof GistRateLimitError) throw e; // never retry a rate limit
+      if (e instanceof RelayAuthError || e instanceof SyncBusyError) throw e;
       lastErr = e;
       await delay(400 * (i + 1));
     }
@@ -175,36 +296,21 @@ export async function pullRemoteRetrying(cfg: SyncConfig, attempts = 3): Promise
   throw lastErr;
 }
 
-export async function pushRemoteRetrying(cfg: SyncConfig, state: AppState, attempts = 3): Promise<void> {
-  let lastErr: unknown;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await pushRemote(cfg, state);
-    } catch (e) {
-      // A rate-limited write must not be retried — each attempt burns more of
-      // the exhausted gist_update budget and keeps it pinned at zero.
-      if (e instanceof GistRateLimitError) throw e;
-      lastErr = e;
-      await delay(400 * (i + 1));
-    }
-  }
-  throw lastErr;
-}
+// --- React context -------------------------------------------------------------------
 
 export interface SyncContextValue {
   config: SyncConfig | null;
   status: SyncStatus;
-  /** Epoch ms until which writes are paused by GitHub's write rate limit
-   * (0 = not paused). While this is in the future, local changes are NOT
-   * reaching the gist — the UI must warn, because switching machines in this
-   * window is how the whole-file LWW sync clobbers unsynced work. */
+  /** Epoch ms until which writes are paused (0 = not paused). While this is
+   * in the future, local changes are NOT reaching the relay — the UI warns,
+   * because editing on a second machine in this window risks losing work. */
   pausedUntil: number;
   /** True once local changes exist that haven't been confirmed pushed. */
   hasUnsynced: boolean;
-  connect: (token: string) => void;
+  connect: (key: string, url?: string) => void;
   disconnect: () => void;
   syncNow: () => void;
-  /** Drain the gist drop box now; resolves to the number of new candidates. */
+  /** Drain the relay drop box now; resolves to the number of new candidates. */
   checkInbox: () => Promise<number>;
 }
 
@@ -214,114 +320,4 @@ export function useSync(): SyncContextValue {
   const ctx = useContext(SyncContext);
   if (!ctx) throw new Error("useSync must be used within SyncContext provider");
   return ctx;
-}
-
-// --- v3: checklist streams (a third file in the same private gist) --------
-// Mirrors the board/inbox helpers above. The whole checklist registry lives in
-// one file so it round-trips independently of board state — a bridge write here
-// never clobbers the board, and vice versa.
-
-const STREAMS_FILE = "viz-org-streams.json";
-
-function serializeStreams(streams: Stream[]): string {
-  return JSON.stringify({ v: 3, streams, savedAt: new Date().toISOString() }, null, 2);
-}
-
-/** Fetch the remote checklist streams, or [] if the file is empty/absent. */
-export async function pullStreams(cfg: SyncConfig): Promise<Stream[]> {
-  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
-  const file = gist.files?.[STREAMS_FILE];
-  if (!file) return [];
-  let content: string = file.content ?? "";
-  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
-  if (!content.trim()) return [];
-  const parsed = JSON.parse(content);
-  if (parsed && Array.isArray(parsed.streams)) return parsed.streams as Stream[];
-  if (Array.isArray(parsed)) return parsed as Stream[];
-  return [];
-}
-
-/** Save all checklist streams to the gist (whole-file replace). */
-export async function pushStreams(cfg: SyncConfig, streams: Stream[]): Promise<void> {
-  await gh(`/gists/${cfg.gistId}`, cfg.token, {
-    method: "PATCH",
-    body: JSON.stringify({ files: { [STREAMS_FILE]: { content: serializeStreams(streams) } } }),
-  });
-}
-
-// --- v3: the reinforcement layer (points, level, events, badges) -------------
-// viz-org-reinforcement.json is app-owned read/write. The events array is
-// append-only, so pulls must NEVER adopt-replace — the caller union-merges by
-// event id (mergeReinforcement). Chat sessions may append events (e.g. weekly
-// reviews) through the relay's ?action=reinforcement.
-
-const REINF_FILE = "viz-org-reinforcement.json";
-
-function serializeReinforcement(rs: ReinforcementState): string {
-  return JSON.stringify(rs, null, 2);
-}
-
-/** Fetch the remote reinforcement state, or null if absent/empty/unreadable. */
-export async function pullReinforcement(cfg: SyncConfig): Promise<ReinforcementState | null> {
-  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
-  const file = gist.files?.[REINF_FILE];
-  if (!file) return null;
-  let content: string = file.content ?? "";
-  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
-  if (!content.trim()) return null;
-  try {
-    const parsed = JSON.parse(content);
-    if (parsed && parsed.v === 1 && Array.isArray(parsed.events)) return parsed as ReinforcementState;
-  } catch {
-    /* unreadable remote — treat as absent, never clobber local */
-  }
-  return null;
-}
-
-// --- coalesced multi-file push ------------------------------------------------
-// One user action can dirty up to three gist files (board done-flag, stream
-// item state, reinforcement event). GitHub meters gist writes in a small
-// per-user bucket (see GistRateLimitError), and a gist PATCH can carry many
-// files — so all dirty files ship in ONE request. This both triples the
-// write budget's mileage and makes stream-state/event pairs atomic.
-
-export interface DirtyFiles {
-  board?: AppState;
-  streams?: Stream[];
-  reinforcement?: ReinforcementState;
-}
-
-export async function pushFiles(cfg: SyncConfig, dirty: DirtyFiles): Promise<void> {
-  const files: Record<string, { content: string }> = {};
-  if (dirty.board) files[GIST_FILE] = { content: serialize(dirty.board) };
-  if (dirty.streams) files[STREAMS_FILE] = { content: serializeStreams(dirty.streams) };
-  if (dirty.reinforcement) files[REINF_FILE] = { content: serializeReinforcement(dirty.reinforcement) };
-  if (!Object.keys(files).length) return;
-  await gh(`/gists/${cfg.gistId}`, cfg.token, {
-    method: "PATCH",
-    body: JSON.stringify({ files }),
-  });
-}
-
-// --- v3: the Analysis tab (read-only) ---------------------------------------
-// viz-org-analysis.json is AUTHORED BY CLAUDE via the bridge; the app only
-// renders it. There is deliberately no pushAnalysis — the app never writes
-// this file (the contract ledger inside it is not the app's to run).
-
-const ANALYSIS_FILE = "viz-org-analysis.json";
-
-/** Fetch the analysis document, or null if absent/unreadable. */
-export async function pullAnalysis(cfg: SyncConfig): Promise<AnalysisDoc | null> {
-  const gist = await (await gh(`/gists/${cfg.gistId}`, cfg.token)).json();
-  const file = gist.files?.[ANALYSIS_FILE];
-  if (!file) return null;
-  let content: string = file.content ?? "";
-  if (file.truncated && file.raw_url) content = await (await fetch(file.raw_url)).text();
-  if (!content.trim()) return null;
-  try {
-    const parsed = JSON.parse(content);
-    return parsed && typeof parsed === "object" ? (parsed as AnalysisDoc) : null;
-  } catch {
-    return null;
-  }
 }
