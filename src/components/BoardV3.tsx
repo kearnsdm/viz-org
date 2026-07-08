@@ -146,6 +146,7 @@ function ProjectBoxV3({
   h,
   pos,
   mode,
+  simple,
   spotlightTask,
   onOpen,
   onOpenTask,
@@ -157,6 +158,7 @@ function ProjectBoxV3({
   h: number;
   pos: CSSProperties;
   mode: BoardMode;
+  simple: boolean;
   spotlightTask: Task | null;
   onOpen: () => void;
   onOpenTask: (taskId: string) => void;
@@ -224,7 +226,7 @@ function ProjectBoxV3({
         <i style={{ width: `${pc}%` }} />
       </div>
       <div className="bb">
-        {spotlightTask && (
+        {!simple && spotlightTask && (
           <button
             className="start"
             onClick={(e) => {
@@ -235,7 +237,7 @@ function ProjectBoxV3({
             ▶ Start here — {spotlightTask.title} · ~{taskMinutes(spotlightTask)} min
           </button>
         )}
-        {open.map((t) => {
+        {!simple && open.map((t) => {
           const stream = streams.find((s) => s.taskId === t.id);
           const prog = stream ? progress(stream) : null;
           const pressing = t.urgency === "urgent" || t.urgency === "high";
@@ -293,7 +295,11 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
   const { ref, size } = useMeasure<HTMLDivElement>();
   const [grpOpen, setGrpOpen] = useState(false);
   const [mode, setMode] = useState<BoardMode>("alloc");
+  const [density, setDensity] = useState<"full" | "simple">("full");
   const hours = state.weeklyHours ?? 40;
+  // Overview: the space itself — allocations + runover, no individual task
+  // stripes, and every small category as its own box (no "Other" fold-in).
+  const simple = density === "simple" && mode !== "holding";
 
   const sizeOf = (p: Project) =>
     mode === "holding"
@@ -314,7 +320,7 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
   let nodes: Array<{ p?: Project; grp?: Array<{ p: Project; v: number }>; v: number; id: string }> = entries.map(
     (e) => ({ p: e.p, v: e.v, id: e.p.id }),
   );
-  if (!grpOpen && mode !== "holding") {
+  if (!grpOpen && mode !== "holding" && !simple) {
     const small = entries.filter((e) => e.v / total < OTHER_SHARE);
     if (small.length >= 2) {
       const ids = new Set(small.map((e) => e.p.id));
@@ -363,6 +369,16 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
             Holding{held.length ? ` (${held.length})` : ""}
           </button>
         </div>
+        {mode !== "holding" && (
+          <div className="modebar" title="Show task stripes, or just the space (allocations + runover)">
+            <button className={density === "full" ? "on" : ""} onClick={() => setDensity("full")}>
+              Tasks
+            </button>
+            <button className={density === "simple" ? "on" : ""} onClick={() => setDensity("simple")}>
+              Overview
+            </button>
+          </div>
+        )}
         <span>
           {mode === "holding"
             ? held.length
@@ -395,7 +411,7 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
       {mode !== "holding" && (
         <div className="rail" style={{ ["--dpc" as string]: `${dpc}%`, ["--bpc" as string]: `${bpc}%` }} />
       )}
-      <div className="frame" ref={ref}>
+      <div className="frame board-frame" ref={ref}>
         {mode === "holding" && held.length === 0 && (
           <div style={{ display: "grid", placeItems: "center", height: "100%", color: "var(--lo)", fontSize: 13 }}>
             The pen is empty. Open a task's sheet and "⏸ Hold" it — it leaves the board until its return date.
@@ -503,6 +519,7 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, notify }: Bo
               h={pos.height}
               pos={pos}
               mode={mode}
+              simple={simple}
               spotlightTask={spot && spot.project.id === project.id ? spot.task : null}
               onOpen={() => onOpenProject(project.id)}
               onOpenTask={(taskId) => onOpenTask(project.id, taskId)}

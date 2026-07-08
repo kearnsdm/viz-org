@@ -1760,6 +1760,15 @@ input[type="checkbox"] {
   background: #0f1114;
   overflow: hidden;
 }
+/* The main board is a SQUARE: it grows with the window up to a cap and stays
+ * centered, so the week reads as a fixed, permanent field — not a widening
+ * rectangle. (Archive keeps its own rectangular frame.) */
+.v3 .board-frame {
+  width: min(100%, 74vh, 900px);
+  height: auto;
+  aspect-ratio: 1 / 1;
+  margin-inline: auto;
+}
 .v3 .box {
   position: absolute;
   border-radius: 4px;
@@ -1768,7 +1777,11 @@ input[type="checkbox"] {
   flex-direction: column;
   cursor: pointer;
   background: color-mix(in srgb, var(--c) 19%, #14161a);
-  outline: 1px solid rgba(0, 0, 0, 0.55);
+  /* A thick boundary in a dark shade of the box's own hue, so adjacent
+   * sections of similar color still read as distinct — the seam carries the
+   * category, not a neutral gray. */
+  border: 2.5px solid color-mix(in srgb, var(--c) 42%, #04060b);
+  outline: 1px solid rgba(0, 0, 0, 0.6);
 }
 .v3 .box.elev {
   background: color-mix(in srgb, var(--c) 27%, #16181d);
@@ -2740,5 +2753,10 @@ input[type="checkbox"] {
   }
   .v3 .frame {
     height: 460px;
+  }
+  /* Keep the main board square on small screens (fills width). */
+  .v3 .board-frame {
+    height: auto;
+    aspect-ratio: 1 / 1;
   }
 }
