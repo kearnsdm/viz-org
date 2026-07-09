@@ -174,7 +174,9 @@ function ProjectBoxV3({
   const { dispatch } = useStore();
   const { streams } = useStreams();
   const { dispatchR } = useReinforcement();
-  const open = project.tasks.filter((t) => !t.done);
+  // Held tasks are parked OFF the board: no stripe, no urgency dot — they
+  // live in the Holding mode until their return date.
+  const open = project.tasks.filter((t) => !t.done && !t.held);
   const openMin = projectWorkMinutes(project);
   const doneMin = projectDoneMinutes(project);
   const alloc = projectAllocMinutes(project) || openMin;

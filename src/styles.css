@@ -2763,6 +2763,13 @@ input[type="checkbox"] {
 }
 
 /* ---- v3 Holding pen ---- */
+.v3 .row3.heldrow label {
+  color: var(--lo);
+}
+.v3 .row3.heldrow .m {
+  color: var(--warn);
+  opacity: 0.8;
+}
 .v3 .retn {
   margin-left: auto;
   flex: none;

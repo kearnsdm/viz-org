@@ -91,26 +91,48 @@ export function ProjectViewV3({
         </div>
         <div className="tkb" style={{ ["--c" as string]: project.color }}>
           <div className="sec">Checklist — each stripe is one task</div>
-          {project.tasks.map((t) => {
-            const pressing = t.urgency === "urgent" || t.urgency === "high";
-            return (
-              <div key={t.id} className={`row3 ${t.done ? "dn" : ""} ${pressing && !t.done ? "ur" : ""}`}>
-                <input type="checkbox" checked={t.done} onChange={() => toggle(t.id, t.done, t.title)} />
-                <label title="Open task" onClick={() => onOpenTask(t.id)}>
-                  {t.heavy ? "🔥 " : ""}
-                  {t.title}
-                </label>
-                <span className="m">
-                  {formatDuration(taskMinutes(t))}
-                  {t.urgency === "urgent" ? " · urgent" : ""}
-                </span>
-              </div>
-            );
-          })}
+          {project.tasks
+            .filter((t) => !t.held)
+            .map((t) => {
+              const pressing = t.urgency === "urgent" || t.urgency === "high";
+              return (
+                <div key={t.id} className={`row3 ${t.done ? "dn" : ""} ${pressing && !t.done ? "ur" : ""}`}>
+                  <input type="checkbox" checked={t.done} onChange={() => toggle(t.id, t.done, t.title)} />
+                  <label title="Open task" onClick={() => onOpenTask(t.id)}>
+                    {t.heavy ? "🔥 " : ""}
+                    {t.title}
+                  </label>
+                  <span className="m">
+                    {formatDuration(taskMinutes(t))}
+                    {t.urgency === "urgent" ? " · urgent" : ""}
+                  </span>
+                </div>
+              );
+            })}
           {project.tasks.length === 0 && (
             <div style={{ fontSize: 12.5, color: "var(--lo)", padding: "8px 0" }}>
               Nothing here yet — file something from Intake.
             </div>
+          )}
+          {/* Held tasks are parked off the active list; a muted footnote keeps
+              them findable here (they live in the board's Holding mode). */}
+          {project.tasks.some((t) => t.held && !t.done) && (
+            <>
+              <div className="sec">⏸ On hold — off the board until their return date</div>
+              {project.tasks
+                .filter((t) => t.held && !t.done)
+                .map((t) => (
+                  <div key={t.id} className="row3 heldrow">
+                    <label title="Open task" onClick={() => onOpenTask(t.id)}>
+                      {t.heavy ? "🔥 " : ""}
+                      {t.title}
+                    </label>
+                    <span className="m">
+                      {formatDuration(taskMinutes(t))} · ↩ {t.scheduledFor?.slice(5) ?? "—"}
+                    </span>
+                  </div>
+                ))}
+            </>
           )}
           <div className="sec">History (append-only — nothing is ever destroyed)</div>
           <div className="hist">
