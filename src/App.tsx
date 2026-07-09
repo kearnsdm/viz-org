@@ -45,7 +45,7 @@ import {
   saveReinforcement,
 } from "./reinforcement";
 import { RankRail } from "./components/RankRail";
-import type { Urgency } from "./types";
+import type { AppState, Project, Urgency } from "./types";
 
 const UI_VERSION_KEY = "viz-org-ui";
 import { availableCredits, badgeById, level, withGame } from "./game";
@@ -440,8 +440,13 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
   useEffect(() => {
     const onConflict = () =>
       notify("Board updated from another device — showing the latest. Re-check your last change.");
+    const onRestored = () => notify("This device had gone blank — restored your board from the server. ✓");
     window.addEventListener("viz-board-conflict", onConflict);
-    return () => window.removeEventListener("viz-board-conflict", onConflict);
+    window.addEventListener("viz-board-restored", onRestored);
+    return () => {
+      window.removeEventListener("viz-board-conflict", onConflict);
+      window.removeEventListener("viz-board-restored", onRestored);
+    };
   }, [notify]);
 
   // Holding pen resurfacing: when a held task's return date arrives, it comes
@@ -689,6 +694,21 @@ export function App() {
   const lastBoardEditAt = useRef(0);
   const RECENT_EDIT_MS = 3 * 60 * 1000;
 
+  // SAFETY NET: an empty board must NEVER overwrite a non-empty one. A local
+  // board going to zero tasks is a symptom (a wiped/blank tab, a bad load) —
+  // essentially never a deliberate act — so every write path below refuses to
+  // sync or adopt it, and re-pulls the real board instead. This is the guard
+  // against "woke up to an empty board".
+  const boardTasks = (s: AppState) => s.projects.reduce((n, p) => n + (p.tasks?.length ?? 0), 0);
+  const serverBoardTasks = () => {
+    try {
+      const p = JSON.parse(lastServerBoard.current || "{}") as AppState;
+      return Array.isArray(p.projects) ? p.projects.reduce((n: number, pr: Project) => n + (pr.tasks?.length ?? 0), 0) : 0;
+    } catch {
+      return 0;
+    }
+  };
+
   // When the relay throttles (burst limit / host trouble), pause writers until
   // it clears. The ref drives flush scheduling; the mirrored STATE drives the
   // visible warning (a ref alone wouldn't re-render). `unsynced` is true
@@ -820,6 +840,26 @@ export function App() {
     if (d.streams && streamsSnap === lastServerStreams.current) d.streams = false;
     const reinfSnap = d.reinf ? JSON.stringify(latestRs.current) : null;
     if (d.reinf && reinfSnap === lastServerReinf.current) d.reinf = false;
+    // Refuse to push an empty board over a non-empty server board; instead pull
+    // the real one back onto this device (self-heals a gone-blank tab too).
+    if (d.board && boardTasks(latest.current) === 0 && serverBoardTasks() > 0) {
+      d.board = false;
+      dirty.current.board = false;
+      (async () => {
+        try {
+          const { state: remote, rev } = await pullBoard(config);
+          if (remote && boardTasks(remote) > 0) {
+            revs.current.board = rev;
+            persistRevs();
+            dispatch({ type: "replaceState", state: remote });
+            lastServerBoard.current = JSON.stringify(normalizeState(remote));
+            window.dispatchEvent(new CustomEvent("viz-board-restored"));
+          }
+        } catch {
+          /* leave local as-is; the next flush re-guards */
+        }
+      })();
+    }
     if (!d.board && !d.streams && !d.reinf) {
       dirty.current = { board: false, streams: false, reinf: false };
       setUnsynced(false);
@@ -879,11 +919,14 @@ export function App() {
               const localStr = JSON.stringify(latest.current);
               const hadUnsyncedEdits = localStr !== lastServerBoard.current;
               const activelyEditing = Date.now() - lastBoardEditAt.current < RECENT_EDIT_MS;
+              // An empty local board never wins, even mid-edit — that's the wipe
+              // symptom, not a real edit worth preserving.
+              const localEmptyOverFull = boardTasks(latest.current) === 0 && !!remote && boardTasks(remote) > 0;
               if (remote && remoteStr === localStr) {
                 // Same content, newer number — a sibling's echo. Nothing to do.
                 lastServerBoard.current = remoteStr;
                 dirty.current.board = false;
-              } else if (activelyEditing && hadUnsyncedEdits) {
+              } else if (activelyEditing && hadUnsyncedEdits && !localEmptyOverFull) {
                 // One human, one active seat: the board the user is EDITING
                 // wins. Re-push ours on the fresh revision — never discard
                 // the thing they just did.
@@ -961,7 +1004,9 @@ export function App() {
       if (e.key === STORAGE_KEY && e.newValue) {
         if (e.newValue === JSON.stringify(latest.current)) return;
         try {
-          const incoming = JSON.parse(e.newValue);
+          const incoming = JSON.parse(e.newValue) as AppState;
+          // Don't let a blank sibling tab wipe a full one.
+          if (boardTasks(incoming) === 0 && boardTasks(latest.current) > 0) return;
           dispatch({ type: "replaceState", state: incoming });
           lastServerBoard.current = JSON.stringify(normalizeState(incoming));
         } catch {
