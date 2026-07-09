@@ -12,7 +12,7 @@ The JSON documents live ON DEVIN'S HOSTING (relay `dataDir`, outside the web roo
 
 All reads/writes go through the relay with the `X-Viz-Key` header — sessions never need (or see) a GitHub token anymore.
 
-**Concurrency status:** the old whole-file last-write-wins clobber is now guarded by per-document revision CAS. Streams and reinforcement merge cleanly on conflict; the BOARD still has no field-level merge (top of v-next) — on a board conflict the app adopts the newer copy and tells the user to re-check their last edit. The one-device-at-a-time habit is still gentler, but no longer load-bearing.
+**Concurrency status ("one human, one active seat", since 2026-07-09):** per-document revision CAS plus four structural guards — echo suppression (a device only pushes content that differs from the server's known copy), identity-preserving merges (ingest of nothing-new returns the same state object, killing cross-device write loops), cross-tab revision sharing via localStorage, and wake-refresh (on focus a device catches up BEFORE pushing; a clean board adopts silently). On a real board conflict the device with user edits in the last 3 minutes re-pushes its board on the fresh revision — the human's latest action is never discarded; the conflict notice appears only when a device holding OLDER unsynced edits has them superseded. Streams/reinforcement always merge. The board's field-level merge remains v-next, but multi-device use no longer needs babysitting.
 
 ## Deploying — two separate deployments; do not conflate them
 1. **The app** (everything in `src/`, `index.html`, `public/`): push to `main` → the Pages Action builds and publishes automatically. That is the entire app deploy. Never build or upload the app anywhere else.
