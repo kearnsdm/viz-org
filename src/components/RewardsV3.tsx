@@ -102,46 +102,77 @@ export function RewardsV3({
         <span>one loop: start a sprint → finish the task → bank credits → redeem a build → rank up</span>
       </div>
       <div className="rw">
-        {/* --- rank card (slim; canonical copy) --- */}
-        <div className="card3">
-          <div className="rankhead">
-            <span className="ranklbl">{rs.level.rank}</span>
-            {rs.level.next && (
-              <>
-                <span className="rankto">→</span>
-                <strong>{rs.level.next}</strong>
-              </>
-            )}
-            <span className="rankpts">
-              {Math.min(progress, threshold)} / {threshold} ⚡
-            </span>
-          </div>
-          <div className="bigbar">
-            <div className="bb-carry" style={{ width: `${carryPct}%` }} title={`${rs.level.carryIn} ⚡ rolled over`} />
-            <div className="bb-earn" style={{ width: `${earnPct}%` }} />
-          </div>
-          <div className="barcap">
-            <span>
-              {rs.level.next === null
-                ? "Top of the ladder — it never decays."
-                : toGo > 0
-                  ? `${toGo} ⚡ to go${pace ? ` — about ${pace} day${pace === 1 ? "" : "s"} at your pace` : ""}`
-                  : gatesLeft.length
-                    ? "Points done — the rest is practice"
-                    : "Ready to level"}
-            </span>
-            {rs.level.carryIn > 0 && <span className="tiny3">{rs.level.carryIn} ⚡ rolled over</span>}
-          </div>
-          {rs.level.next && gatesLeft.length > 0 && (
-            <div className="alsoline">
-              Also needs{gatesLeft.map((g) => (
-                <span key={g}>
-                  {" "}
-                  · <b>{g}</b>
-                </span>
-              ))}
+        {/* --- top band: rank on the left, credits + earnings at the end --- */}
+        <div className="rwtop">
+          <div className="card3 rw-rank">
+            <div className="rankhead">
+              <span className="ranklbl">{rs.level.rank}</span>
+              {rs.level.next && (
+                <>
+                  <span className="rankto">→</span>
+                  <strong>{rs.level.next}</strong>
+                </>
+              )}
+              <span className="rankpts">
+                {Math.min(progress, threshold)} / {threshold} ⚡
+              </span>
             </div>
-          )}
+            <div className="bigbar">
+              <div className="bb-carry" style={{ width: `${carryPct}%` }} title={`${rs.level.carryIn} ⚡ rolled over`} />
+              <div className="bb-earn" style={{ width: `${earnPct}%` }} />
+            </div>
+            <div className="barcap">
+              <span>
+                {rs.level.next === null
+                  ? "Top of the ladder — it never decays."
+                  : toGo > 0
+                    ? `${toGo} ⚡ to go${pace ? ` — about ${pace} day${pace === 1 ? "" : "s"} at your pace` : ""}`
+                    : gatesLeft.length
+                      ? "Points done — the rest is practice"
+                      : "Ready to level"}
+              </span>
+              {rs.level.carryIn > 0 && <span className="tiny3">{rs.level.carryIn} ⚡ rolled over</span>}
+            </div>
+            {rs.level.next && gatesLeft.length > 0 && (
+              <div className="alsoline">
+                Also needs{gatesLeft.map((g) => (
+                  <span key={g}>
+                    {" "}
+                    · <b>{g}</b>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card3 rw-credits">
+            <h4>🛠️ Build Credits</h4>
+            <div className="cbar">
+              <i style={{ width: `${total % POINTS_PER_CREDIT}%` }} />
+            </div>
+            <div className="credits-line">
+              <b>{availableCredits3(rs)} ready</b> · {creditsRedeemed(rs)} redeemed
+            </div>
+            <div className="tiny3">{pointsToNextCredit3(rs)} pts to the next credit</div>
+            <button className="btn pri" disabled={availableCredits3(rs) < 1} onClick={redeem}>
+              Redeem → build session
+            </button>
+          </div>
+
+          <div className="card3 rw-earn">
+            <h4>
+              Recent earnings <span className="h4-aside">⚡ {total} lifetime</span>
+            </h4>
+            <div className="ledg mini">
+              {recentEarnings(rs, 5).map((e) => (
+                <div key={e.id}>
+                  <span className="lt">{e.label ?? e.kind}</span>
+                  <span className="pt">{e.delta > 0 ? `+${e.delta} ⚡` : "—"}</span>
+                </div>
+              ))}
+              {!recentEarnings(rs, 1).length && <div className="recsub">Nothing yet — finish something small.</div>}
+            </div>
+          </div>
         </div>
 
         {/* --- the two recommendation boxes --- */}
@@ -199,42 +230,6 @@ export function RewardsV3({
                 </span>
                 <span className="trow-v">+{spotStepPay} ⚡</span>
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* --- Build Credits (new engine is v3 credit truth — D5) --- */}
-        <div className="card3">
-          <h4>🛠️ Build Credits — the right to keep building</h4>
-          <div className="cbar">
-            <i style={{ width: `${total % POINTS_PER_CREDIT}%` }} />
-          </div>
-          <div className="crow">
-            <span>{pointsToNextCredit3(rs)} pts to next credit</span>
-            <span>
-              {availableCredits3(rs)} ready · {creditsRedeemed(rs)} redeemed
-            </span>
-            <button className="btn pri" disabled={availableCredits3(rs) < 1} onClick={redeem}>
-              Redeem → build session
-            </button>
-          </div>
-        </div>
-
-        {/* --- recent earnings (the event log, in plain words) --- */}
-        <div className="card3">
-          <h4>Recent earnings</h4>
-          <div className="ledg">
-            {recentEarnings(rs, 10).map((e) => (
-              <div key={e.id}>
-                <span className="lt">{e.label ?? e.kind}</span>
-                <span className="tag">
-                  {new Date(e.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
-                </span>
-                <span className="pt">{e.delta > 0 ? `+${e.delta} ⚡` : "—"}</span>
-              </div>
-            ))}
-            {!recentEarnings(rs, 1).length && (
-              <div className="recsub">Nothing yet — finish something small.</div>
             )}
           </div>
         </div>
