@@ -544,10 +544,12 @@ export function mergeReinforcement(local: ReinforcementState, remote: Reinforcem
   if (!remote || remote.v !== 1 || !Array.isArray(remote.events)) return local;
   const seen = new Set(local.events.map((e) => e.id));
   const merged = [...local.events];
+  let addedEvents = 0;
   for (const e of remote.events) {
     if (e && typeof e.id === "string" && !seen.has(e.id)) {
       merged.push(e);
       seen.add(e.id);
+      addedEvents++;
     }
   }
   merged.sort((a, b) => a.at - b.at);
@@ -580,13 +582,29 @@ export function mergeReinforcement(local: ReinforcementState, remote: Reinforcem
       };
   }
 
+  const creditsRedeemedBase = Math.max(local.creditsRedeemedBase, remote.creditsRedeemedBase ?? 0);
+  const hiddenPool = remote.hiddenPool ?? local.hiddenPool;
+
+  // IDENTITY PRESERVATION — the anti-ping-pong clause. If the merge changed
+  // nothing material, return `local` UNTOUCHED (same reference): a re-stamped
+  // updatedAt would otherwise read as "state changed" → push → bump the
+  // revision → stale the other device → it merges → re-stamps → pushes…
+  // an endless two-device write loop over identical data.
+  const unchanged =
+    addedEvents === 0 &&
+    level === local.level &&
+    creditsRedeemedBase === local.creditsRedeemedBase &&
+    hiddenPool === local.hiddenPool &&
+    JSON.stringify(badges) === JSON.stringify(local.badges);
+  if (unchanged) return local;
+
   return withDerived({
     ...local,
     events: merged,
     level,
     badges,
-    creditsRedeemedBase: Math.max(local.creditsRedeemedBase, remote.creditsRedeemedBase ?? 0),
-    hiddenPool: remote.hiddenPool ?? local.hiddenPool,
+    creditsRedeemedBase,
+    hiddenPool,
   });
 }
 

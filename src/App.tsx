@@ -26,11 +26,13 @@ import {
   formatDuration,
   isoDate,
   loadState,
+  normalizeState,
   reducer,
   saveState,
   taskMinutes,
   uid,
   useStore,
+  type Action,
   type PlanItem,
 } from "./store";
 import { StreamsContext, loadStreams, saveStreams, streamsReducer } from "./streams";
@@ -59,6 +61,7 @@ import {
   pullBoardRetrying,
   pullInbox,
   pullReinforcement,
+  pullRevs,
   pullStreams,
   pushDocs,
   saveSyncConfig,
@@ -660,7 +663,31 @@ export function App() {
 
   // Last-seen revision per relay document. Pushes send these as the CAS base;
   // a 409 means another device wrote first and we merge instead of clobbering.
+  // Revisions are mirrored to localStorage so sibling tabs on the SAME machine
+  // share them — otherwise each tab treats the other's writes as "another
+  // device" and manufactures phantom conflicts.
   const revs = useRef<DocRevs>({ board: 0, streams: 0, reinforcement: 0 });
+  const REVS_KEY = "viz-org-revs-v1";
+  const persistRevs = () => {
+    try {
+      localStorage.setItem(REVS_KEY, JSON.stringify(revs.current));
+    } catch {
+      /* best-effort */
+    }
+  };
+
+  // One human, one active seat: the board on the device they're ACTUALLY
+  // editing wins. `lastServerBoard` is the board content the server is known
+  // to hold (stringified state) — pushing identical content is an echo and is
+  // skipped entirely, so background tabs stop bumping revisions. `lastBoardEditAt`
+  // marks real user edits (sync adopts don't count); within this window a CAS
+  // conflict resolves by RE-PUSHING our board on the fresh revision instead of
+  // discarding what the user just did.
+  const lastServerBoard = useRef<string>("");
+  const lastServerStreams = useRef<string>("");
+  const lastServerReinf = useRef<string>("");
+  const lastBoardEditAt = useRef(0);
+  const RECENT_EDIT_MS = 3 * 60 * 1000;
 
   // When the relay throttles (burst limit / host trouble), pause writers until
   // it clears. The ref drives flush scheduling; the mirrored STATE drives the
@@ -718,8 +745,11 @@ export function App() {
       .then(({ rs: remote, rev }) => {
         if (cancelled) return;
         revs.current.reinforcement = rev;
-        if (remote) dispatchR({ type: "ingest", remote });
-        else dispatchR({ type: "seed", legacy: withGame(latest.current.game) });
+        persistRevs();
+        if (remote) {
+          lastServerReinf.current = JSON.stringify(remote);
+          dispatchR({ type: "ingest", remote });
+        } else dispatchR({ type: "seed", legacy: withGame(latest.current.game) });
       })
       .catch(() => {})
       .finally(() => {
@@ -749,6 +779,8 @@ export function App() {
       .then(({ streams: remote, rev }) => {
         if (cancelled) return;
         revs.current.streams = rev;
+        persistRevs();
+        lastServerStreams.current = JSON.stringify(remote);
         if (remote.length) dispatchStreams({ type: "ingest", streams: remote });
       })
       .catch(() => {})
@@ -779,7 +811,20 @@ export function App() {
       return;
     }
     const d = { ...dirty.current };
-    if (!d.board && !d.streams && !d.reinf) return;
+    // Echo suppression: if a document's content is exactly what the server
+    // already holds, there is nothing to say — pushing it would only bump the
+    // revision and manufacture conflicts for every other tab and machine.
+    const boardSnap = d.board ? JSON.stringify(latest.current) : null;
+    if (d.board && boardSnap === lastServerBoard.current) d.board = false;
+    const streamsSnap = d.streams ? JSON.stringify(latestStreams.current) : null;
+    if (d.streams && streamsSnap === lastServerStreams.current) d.streams = false;
+    const reinfSnap = d.reinf ? JSON.stringify(latestRs.current) : null;
+    if (d.reinf && reinfSnap === lastServerReinf.current) d.reinf = false;
+    if (!d.board && !d.streams && !d.reinf) {
+      dirty.current = { board: false, streams: false, reinf: false };
+      setUnsynced(false);
+      return;
+    }
     dirty.current = { board: false, streams: false, reinf: false };
     setStatus({ phase: "syncing" });
 
@@ -806,6 +851,10 @@ export function App() {
     )
       .then((out) => {
         revs.current = { ...revs.current, ...out };
+        if (out.board !== undefined && boardSnap !== null) lastServerBoard.current = boardSnap;
+        if (out.streams !== undefined && streamsSnap !== null) lastServerStreams.current = streamsSnap;
+        if (out.reinforcement !== undefined && reinfSnap !== null) lastServerReinf.current = reinfSnap;
+        persistRevs();
         setStatus({ phase: "ok", at: Date.now() });
         setPausedUntil(0);
         // Only truly clean if nothing new was dirtied while the push flew.
@@ -820,26 +869,49 @@ export function App() {
           // The 409's rev is authoritative (POST responses bypass any cache);
           // the re-pulls below then read fresh content at/after that rev.
           revs.current[e.doc] = e.rev;
+          persistRevs();
           try {
             if (e.doc === "board") {
               const { state: remote, rev } = await pullBoard(config);
               revs.current.board = rev;
-              if (remote) {
-                // The board has no field merge (known v-next) — adopt the
-                // newer copy and SAY SO, instead of silently clobbering it.
-                dispatch({ type: "replaceState", state: remote });
-                window.dispatchEvent(new CustomEvent("viz-board-conflict"));
+              persistRevs();
+              const remoteStr = remote ? JSON.stringify(normalizeState(remote)) : "";
+              const localStr = JSON.stringify(latest.current);
+              const hadUnsyncedEdits = localStr !== lastServerBoard.current;
+              const activelyEditing = Date.now() - lastBoardEditAt.current < RECENT_EDIT_MS;
+              if (remote && remoteStr === localStr) {
+                // Same content, newer number — a sibling's echo. Nothing to do.
+                lastServerBoard.current = remoteStr;
                 dirty.current.board = false;
+              } else if (activelyEditing && hadUnsyncedEdits) {
+                // One human, one active seat: the board the user is EDITING
+                // wins. Re-push ours on the fresh revision — never discard
+                // the thing they just did.
+                dirty.current.board = true;
+              } else if (remote) {
+                // We're a bystander (no fresh edits) — take the newer copy.
+                dispatch({ type: "replaceState", state: remote });
+                lastServerBoard.current = remoteStr;
+                dirty.current.board = false;
+                // Warn ONLY when real unsynced local edits were superseded;
+                // a clean tab adopting quietly is just... syncing.
+                if (hadUnsyncedEdits) window.dispatchEvent(new CustomEvent("viz-board-conflict"));
               }
             } else if (e.doc === "streams") {
               const { streams: remote, rev } = await pullStreams(config);
               revs.current.streams = rev;
+              persistRevs();
+              lastServerStreams.current = JSON.stringify(remote);
               if (remote.length) dispatchStreams({ type: "ingest", streams: remote });
               dirty.current.streams = true; // merged result still needs pushing
             } else if (e.doc === "reinforcement") {
               const { rs: remote, rev } = await pullReinforcement(config);
               revs.current.reinforcement = rev;
-              if (remote) dispatchR({ type: "ingest", remote });
+              persistRevs();
+              if (remote) {
+                lastServerReinf.current = JSON.stringify(remote);
+                dispatchR({ type: "ingest", remote });
+              }
               dirty.current.reinf = true;
             }
           } catch {
@@ -880,13 +952,18 @@ export function App() {
 
   // Live-sync across tabs/windows on the same browser (same-computer screens).
   // The reinforcement key merges by event id instead of replacing, so two tabs
-  // can't double-pay a doubler or lose each other's events.
+  // can't double-pay a doubler or lose each other's events. Revisions are
+  // shared too (element-wise max — they only ever grow), so a sibling tab's
+  // push doesn't read as a foreign device; and adopting a sibling's board also
+  // adopts it as "what the server holds" so this tab won't echo-push it.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key === STORAGE_KEY && e.newValue) {
         if (e.newValue === JSON.stringify(latest.current)) return;
         try {
-          dispatch({ type: "replaceState", state: JSON.parse(e.newValue) });
+          const incoming = JSON.parse(e.newValue);
+          dispatch({ type: "replaceState", state: incoming });
+          lastServerBoard.current = JSON.stringify(normalizeState(incoming));
         } catch {
           /* ignore malformed */
         }
@@ -898,9 +975,22 @@ export function App() {
           /* ignore malformed */
         }
       }
+      if (e.key === REVS_KEY && e.newValue) {
+        try {
+          const r = JSON.parse(e.newValue) as Partial<DocRevs>;
+          revs.current = {
+            board: Math.max(revs.current.board, r.board ?? 0),
+            streams: Math.max(revs.current.streams, r.streams ?? 0),
+            reinforcement: Math.max(revs.current.reinforcement, r.reinforcement ?? 0),
+          };
+        } catch {
+          /* ignore malformed */
+        }
+      }
     };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // When sync is configured (or reconfigured), pull the remote board. If the
@@ -920,11 +1010,17 @@ export function App() {
         revs.current.board = rev;
         if (remote) {
           dispatch({ type: "replaceState", state: remote });
+          // Baseline what the reducer will actually store (normalized), so
+          // the echo comparison is apples-to-apples.
+          lastServerBoard.current = JSON.stringify(normalizeState(remote));
         } else {
           // Empty store — seed it with this device's board.
-          const out = await pushDocs(config, { board: latest.current }, revs.current);
+          const snap = latest.current;
+          const out = await pushDocs(config, { board: snap }, revs.current);
           revs.current = { ...revs.current, ...out };
+          lastServerBoard.current = JSON.stringify(snap);
         }
+        persistRevs();
         if (!cancelled) {
           setStatus({ phase: "ok", at: Date.now() });
           ingestInbox().catch(() => {});
@@ -999,15 +1095,57 @@ export function App() {
     scheduleFlush();
   }, [state, config, scheduleFlush]);
 
-  // When the connection comes back (or the tab regains focus), re-sync so a
-  // stale "NetworkError" from a blip heals itself automatically.
+  // Catch up from the server: one cheap ping tells us which documents moved;
+  // only those get pulled. A clean board (no unsynced local edits) adopts the
+  // newer copy silently — this is how a woken laptop "hands control back"
+  // without any conflict theater. A board with fresh local edits is left
+  // alone; the CAS flow will arbitrate when it pushes.
+  const refreshFromServer = useCallback(async () => {
+    if (!config) return;
+    try {
+      const server = await pullRevs(config);
+      if (!server) return;
+      if ((server.board ?? 0) > revs.current.board) {
+        const { state: remote, rev } = await pullBoard(config);
+        revs.current.board = rev;
+        const localClean = JSON.stringify(latest.current) === lastServerBoard.current;
+        if (remote && localClean) {
+          dispatch({ type: "replaceState", state: remote });
+          lastServerBoard.current = JSON.stringify(normalizeState(remote));
+        }
+      }
+      if ((server.streams ?? 0) > revs.current.streams) {
+        const { streams: remote, rev } = await pullStreams(config);
+        revs.current.streams = rev;
+        lastServerStreams.current = JSON.stringify(remote);
+        if (remote.length) dispatchStreams({ type: "ingest", streams: remote });
+      }
+      if ((server.reinforcement ?? 0) > revs.current.reinforcement) {
+        const { rs: remote, rev } = await pullReinforcement(config);
+        revs.current.reinforcement = rev;
+        if (remote) {
+          lastServerReinf.current = JSON.stringify(remote);
+          dispatchR({ type: "ingest", remote });
+        }
+      }
+      persistRevs();
+    } catch {
+      /* a failed refresh is harmless — the CAS flow still guards writes */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config]);
+
+  // When the connection comes back (or the window regains focus — i.e. the
+  // user just sat down at THIS machine), refresh from the server FIRST, then
+  // flush anything local, then drain the inbox.
   useEffect(() => {
     if (!config) return;
     const handler = () => {
-      if (hydrated.current) {
-        pushNow();
+      if (!hydrated.current) return;
+      refreshFromServer().finally(() => {
+        flushDirty();
         ingestInbox().catch(() => {});
-      }
+      });
     };
     window.addEventListener("online", handler);
     window.addEventListener("focus", handler);
@@ -1015,7 +1153,7 @@ export function App() {
       window.removeEventListener("online", handler);
       window.removeEventListener("focus", handler);
     };
-  }, [config, pushNow, ingestInbox]);
+  }, [config, refreshFromServer, flushDirty, ingestInbox]);
 
   const connect = useCallback((key: string, url?: string) => {
     const relayUrl = (url ?? DEFAULT_RELAY_URL).trim();
@@ -1057,8 +1195,15 @@ export function App() {
     });
   }, []);
 
+  // Components dispatch through this wrapper so real user edits stamp
+  // lastBoardEditAt; the sync layer's own replaceState adoptions do not.
+  const dispatchTracked = useCallback((action: Action) => {
+    if (action.type !== "replaceState") lastBoardEditAt.current = Date.now();
+    dispatch(action);
+  }, []);
+
   return (
-    <StoreContext.Provider value={{ state, dispatch }}>
+    <StoreContext.Provider value={{ state, dispatch: dispatchTracked }}>
       <StreamsContext.Provider value={{ streams, dispatch: dispatchStreams }}>
         <ReinforcementContext.Provider value={{ rs, dispatchR }}>
           <SyncContext.Provider

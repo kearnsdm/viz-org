@@ -105,15 +105,23 @@ export function saveStreams(streams: Stream[]): void {
   }
 }
 
-/** Merge remote streams (e.g. from the gist) into local, last-write-wins by updatedAt. */
+/** Merge remote streams into local, last-write-wins by updatedAt PER STREAM.
+ * Identity-preserving: when the merge changes nothing, the ORIGINAL array is
+ * returned (same reference) — a fresh array would read as "state changed",
+ * trigger a push, bump the revision, and ping-pong forever with every other
+ * open device syncing the same data. */
 export function mergeStreams(local: Stream[], remote: Stream[]): Stream[] {
   const byId = new Map<string, Stream>();
   for (const s of local) byId.set(s.streamId, s);
+  let changed = false;
   for (const r of remote) {
     const cur = byId.get(r.streamId);
-    if (!cur || r.updatedAt >= cur.updatedAt) byId.set(r.streamId, r);
+    if (!cur || r.updatedAt > cur.updatedAt) {
+      byId.set(r.streamId, r);
+      changed = true;
+    }
   }
-  return [...byId.values()];
+  return changed ? [...byId.values()] : local;
 }
 
 // --- resolution (you refer to streams by name/alias/codename, never id) ----

@@ -167,6 +167,13 @@ export async function testRelay(url: string, key: string): Promise<void> {
   if (!j?.ok) throw new Error("That URL doesn't answer like a viz relay.");
 }
 
+/** Cheap revision overview — one GET tells a waking device what moved. */
+export async function pullRevs(cfg: SyncConfig): Promise<Record<string, number> | null> {
+  const r = await relay(cfg, "ping");
+  const j = r.json() as { ok?: boolean; revs?: Record<string, number> } | null;
+  return j?.ok && j.revs ? j.revs : null;
+}
+
 // --- serializers (same envelopes as the gist era, so nothing downstream moves) --
 
 function serializeBoard(state: AppState): string {
