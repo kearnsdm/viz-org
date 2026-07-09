@@ -1766,9 +1766,14 @@ input[type="checkbox"] {
  * review at a glance. Height-driven so it never overflows the viewport.
  * (Archive keeps its own rectangular frame.) */
 .v3 .board-frame {
-  --board-h: min(74vh, 760px);
+  /* Fill the screen: the frame takes whatever vertical room the viewport has
+   * after the header/caption chrome (so it always fits without scrolling),
+   * and the width follows at the fixed 1.6:1 rectangle. On a large monitor
+   * the board grows with it; the shape — the bounded time rectangle — never
+   * changes, and margin-inline keeps it centered off the edges. */
+  --board-h: clamp(460px, calc(100vh - 250px), 1300px);
   height: var(--board-h);
-  width: min(100%, calc(var(--board-h) * 1.6), 1240px);
+  width: min(100%, calc(var(--board-h) * 1.6));
   margin-inline: auto;
 }
 .v3 .box {
