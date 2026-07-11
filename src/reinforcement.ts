@@ -374,7 +374,13 @@ function withDerived(rs: ReinforcementState): ReinforcementState {
     ...rs,
     pointsTotal: pointsTotal(rs),
     weekly: { medianEarn: weeklyMedianEarn(rs.events) },
-    updatedAt: Date.now(),
+    // Deterministic — the newest event's own timestamp, never Date.now().
+    // Two devices folding the same log must serialize byte-identically, or
+    // every ingest re-stamps the doc into "new content" and echo suppression
+    // can never hold: each real event then fans out as one no-op push per
+    // listening tab/device (the churn that drove the reinforcement revision
+    // to ~8× its event count). Nothing reads this field; it is wire metadata.
+    updatedAt: rs.events.reduce((m, e) => Math.max(m, e.at), 0),
   };
 }
 

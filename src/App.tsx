@@ -1016,6 +1016,12 @@ export function App() {
       if (e.key === REINF_STORAGE_KEY && e.newValue) {
         try {
           dispatchR({ type: "ingest", remote: JSON.parse(e.newValue) });
+          // As with the board above: the sibling that wrote this is the one
+          // pushing it. Adopting it as "what the server holds" keeps this tab
+          // from echo-pushing the identical merge result; if this tab holds
+          // events the sibling lacks, the merged union still differs and
+          // still pushes.
+          lastServerReinf.current = e.newValue;
         } catch {
           /* ignore malformed */
         }
