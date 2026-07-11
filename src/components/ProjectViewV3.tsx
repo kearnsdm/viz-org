@@ -37,6 +37,7 @@ export function ProjectViewV3({
   onWeek,
   onOpenTask,
   onSprint,
+  onChain,
   notify,
 }: {
   projectId: string;
@@ -44,6 +45,8 @@ export function ProjectViewV3({
   onWeek: () => void;
   onOpenTask: (taskId: string) => void;
   onSprint: () => void;
+  /** Start a chain over this box's open tasks (red first). */
+  onChain?: (queue: string[]) => void;
   notify: (msg: string, undo?: () => void) => void;
 }) {
   const { state, dispatch } = useStore();
@@ -104,6 +107,18 @@ export function ProjectViewV3({
               onSave={(hours) => dispatch({ type: "setCapacity", projectId, capacity: hours })}
             />
           </span>
+          {onChain && project.tasks.filter((t) => !t.done && !t.held).length >= 2 && (
+            <button
+              className="btn"
+              title="One card at a time through this box's open tasks, red first — work it, ✓ it, next appears"
+              onClick={(e) => {
+                e.stopPropagation();
+                onChain(sortTasksForDisplay(project.tasks.filter((t) => !t.done && !t.held)).map((t) => t.id));
+              }}
+            >
+              ⛓ Chain
+            </button>
+          )}
           <button
             className="btn pri"
             onClick={(e) => {

@@ -500,7 +500,9 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
   const [tab, setTab] = useState<V3Tab>("board");
   const [projectView, setProjectView] = useState<string | null>(null);
   const [sheet, setSheet] = useState<{ projectId: string; taskId: string } | null>(null);
-  const [focus, setFocus] = useState<{ title?: string; taskId?: string; preset?: number } | null>(null);
+  const [focus, setFocus] = useState<{ title?: string; taskId?: string; preset?: number; queue?: string[] } | null>(
+    null,
+  );
   const [addOpen, setAddOpen] = useState(false);
   const [syncOpen, setSyncOpen] = useState(false);
   const [toast, setToast] = useState<{ msg: string; undo?: () => void } | null>(null);
@@ -630,6 +632,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           onWeek={() => goTab("week")}
           onOpenTask={(taskId) => openTask(projectView, taskId)}
           onSprint={() => setFocus({})}
+          onChain={(q) => setFocus({ queue: q })}
           notify={notify}
         />
       ) : tab === "board" ? (
@@ -655,6 +658,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
             setFocus({
               taskId: opts?.taskId,
               preset: opts?.preset,
+              queue: opts?.queue,
               title: opts?.taskId ? findTaskItem(state, opts.taskId)?.task.title : undefined,
             });
           }}
@@ -682,6 +686,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           title={focus.title}
           taskId={focus.taskId}
           preset={focus.preset}
+          queue={focus.queue}
           onClose={() => setFocus(null)}
           notify={notify}
         />

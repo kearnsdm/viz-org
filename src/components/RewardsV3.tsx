@@ -1,4 +1,4 @@
-import { formatDuration, spotlightPick, taskMinutes, useStore } from "../store";
+import { formatDuration, sortTasksForDisplay, spotlightPick, taskMinutes, useStore } from "../store";
 import { useStreams } from "../streams";
 import {
   POINTS_PER_CREDIT,
@@ -42,7 +42,7 @@ export function RewardsV3({
 }: {
   notify: (msg: string) => void;
   onOpenTask: (projectId: string, taskId: string) => void;
-  onSprint: (opts?: { projectId?: string; taskId?: string; preset?: number }) => void;
+  onSprint: (opts?: { projectId?: string; taskId?: string; preset?: number; queue?: string[] }) => void;
 }) {
   const { state } = useStore();
   const { streams } = useStreams();
@@ -84,6 +84,10 @@ export function RewardsV3({
     .filter((r) => taskMinutes(r.task) <= 30)
     .sort((a, b) => taskWorth(b.task) - taskWorth(a.task))
     .slice(0, 3);
+  // The chain: every open ≤30m task, red first (urgent → high → due), up to 8.
+  const chainIds = sortTasksForDisplay(open.filter((r) => taskMinutes(r.task) <= 30).map((r) => r.task))
+    .slice(0, 8)
+    .map((t) => t.id);
   const spotStream = spot ? streams.find((s) => s.taskId === spot.task.id) : undefined;
   const spotStepPay = spot && spotStream ? nextStepPay(spot.task, spotStream, rs.events) : 0;
 
@@ -204,7 +208,18 @@ export function RewardsV3({
             {!worthRows.length && <div className="recsub">Nothing open — enjoy it.</div>}
           </div>
           <div className="card3" style={{ margin: 0 }}>
-            <h4>Quick hits</h4>
+            <h4>
+              Quick hits
+              {chainIds.length >= 2 && (
+                <button
+                  className="btn chainbtn"
+                  title="One card at a time: work it, ✓ it, the next appears. Every completion pays on the spot."
+                  onClick={() => onSprint({ queue: chainIds })}
+                >
+                  ⛓ Chain {chainIds.length}
+                </button>
+              )}
+            </h4>
             <p className="recsub">a few points, fast</p>
             <div className="trow" onClick={() => onSprint({ preset: 10 })}>
               <span className="trow-t">

@@ -3694,3 +3694,37 @@ input[type="checkbox"] {
     flex-basis: 150px;
   }
 }
+
+/* ---- installment 6: chain sprints ---- */
+.v3 .chainbar {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--hi);
+  margin: 2px 0 6px;
+}
+.v3 .chainbar .chainstat {
+  margin-left: auto;
+  font-weight: 600;
+  color: var(--lo);
+}
+.v3 .chainrow {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.v3 .chainsum {
+  text-align: center;
+}
+.v3 .chainsum p {
+  font-size: 13px;
+  color: var(--mid);
+}
+.v3 .chainbtn {
+  font-size: 10.5px;
+  padding: 3px 8px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
