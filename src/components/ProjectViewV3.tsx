@@ -1,7 +1,30 @@
-import { formatDuration, taskMinutes, useStore } from "../store";
+import { useState } from "react";
+import { formatDuration, sortTasksForDisplay, taskMinutes, useStore } from "../store";
 import { headerText, InlineHours } from "./BoardV3";
 import { useStreams } from "../streams";
 import { useReinforcement } from "../reinforcement";
+
+/** Curated box hues — spaced so no two confusables sit together. Hue stays
+ * the category channel; picking a color here recolors the whole box family
+ * (board tile, stripes, week chips) at once. */
+export const COLOR_CHOICES = [
+  "#6366f1", // indigo
+  "#8b5cf6", // violet
+  "#a855f7", // purple
+  "#ec4899", // pink
+  "#f43f5e", // rose
+  "#ef4444", // red
+  "#f97316", // orange
+  "#f59e0b", // amber
+  "#eab308", // yellow
+  "#84cc16", // lime
+  "#10b981", // emerald
+  "#14b8a6", // teal
+  "#06b6d4", // cyan
+  "#0ea5e9", // sky
+  "#3b82f6", // blue
+  "#64748b", // slate
+];
 
 // The v3 project screen — the box, zoomed all the way in. The surface you
 // entered through is the exit: clicking the header (or the app logo) returns
@@ -26,6 +49,8 @@ export function ProjectViewV3({
   const { state, dispatch } = useStore();
   const { streams } = useStreams();
   const { dispatchR } = useReinforcement();
+  const [showDone, setShowDone] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
   const project = state.projects.find((p) => p.id === projectId);
   if (!project) return null;
 
@@ -91,28 +116,67 @@ export function ProjectViewV3({
         </div>
         <div className="tkb" style={{ ["--c" as string]: project.color }}>
           <div className="sec">Checklist — each stripe is one task</div>
-          {project.tasks
-            .filter((t) => !t.held)
-            .map((t) => {
-              const pressing = t.urgency === "urgent" || t.urgency === "high";
-              return (
-                <div key={t.id} className={`row3 ${t.done ? "dn" : ""} ${pressing && !t.done ? "ur" : ""}`}>
-                  <input type="checkbox" checked={t.done} onChange={() => toggle(t.id, t.done, t.title)} />
-                  <label title="Open task" onClick={() => onOpenTask(t.id)}>
-                    {t.heavy ? "🔥 " : ""}
-                    {t.title}
-                  </label>
-                  <span className="m">
-                    {formatDuration(taskMinutes(t))}
-                    {t.urgency === "urgent" ? " · urgent" : ""}
-                  </span>
-                </div>
-              );
-            })}
+          {sortTasksForDisplay(project.tasks.filter((t) => !t.held && !t.done)).map((t) => {
+            const pressing = t.urgency === "urgent" || t.urgency === "high";
+            return (
+              <div key={t.id} className={`row3 ${pressing ? "ur" : ""}`}>
+                <input type="checkbox" checked={false} onChange={() => toggle(t.id, false, t.title)} />
+                <label title="Open task" onClick={() => onOpenTask(t.id)}>
+                  {t.heavy ? "🔥 " : ""}
+                  {t.title}
+                </label>
+                <span className="m">
+                  {formatDuration(taskMinutes(t))}
+                  {t.urgency === "urgent" ? " · urgent" : ""}
+                </span>
+              </div>
+            );
+          })}
           {project.tasks.length === 0 && (
             <div style={{ fontSize: 12.5, color: "var(--lo)", padding: "8px 0" }}>
-              Nothing here yet — file something from Intake.
+              Nothing here yet — file something from Intake, or add one below.
             </div>
+          )}
+          {/* Add a task in place — Enter files it into this box (normal, 30m
+              defaults; open its sheet to set due/urgency/estimate). */}
+          <div className="addrow3">
+            <span className="addplus">+</span>
+            <input
+              value={newTitle}
+              placeholder="Add a task to this box…"
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  const title = newTitle.trim();
+                  if (!title) return;
+                  dispatch({ type: "addTask", projectId, title });
+                  setNewTitle("");
+                  notify(`+ ${title}`);
+                }
+              }}
+            />
+          </div>
+          {/* Finished work folds away — the count stays, the noise goes. */}
+          {project.tasks.some((t) => t.done) && (
+            <>
+              <div className="sec donesec" onClick={() => setShowDone((v) => !v)} title="Show / hide finished tasks">
+                {showDone ? "▾" : "▸"} ✓ Done ({project.tasks.filter((t) => t.done).length}) — cleared from the live
+                list; also in the Archive
+              </div>
+              {showDone &&
+                project.tasks
+                  .filter((t) => t.done)
+                  .map((t) => (
+                    <div key={t.id} className="row3 dn">
+                      <input type="checkbox" checked onChange={() => toggle(t.id, true, t.title)} />
+                      <label title="Open task" onClick={() => onOpenTask(t.id)}>
+                        {t.heavy ? "🔥 " : ""}
+                        {t.title}
+                      </label>
+                      <span className="m">{formatDuration(taskMinutes(t))}</span>
+                    </div>
+                  ))}
+            </>
           )}
           {/* Held tasks are parked off the active list; a muted footnote keeps
               them findable here (they live in the board's Holding mode). */}
@@ -134,6 +198,18 @@ export function ProjectViewV3({
                 ))}
             </>
           )}
+          <div className="sec">Box color — hue is this box's identity everywhere</div>
+          <div className="swrow">
+            {COLOR_CHOICES.map((c) => (
+              <button
+                key={c}
+                className={`sw ${project.color.toLowerCase() === c ? "on" : ""}`}
+                style={{ background: c }}
+                title={c}
+                onClick={() => dispatch({ type: "setColor", projectId, color: c })}
+              />
+            ))}
+          </div>
           <div className="sec">History (append-only — nothing is ever destroyed)</div>
           <div className="hist">
             {stream ? `create → bind → ${checkEvents} check event(s)` : `${doneCount} completion(s) on this box`}. Replans

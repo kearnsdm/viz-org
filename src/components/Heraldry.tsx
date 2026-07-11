@@ -341,7 +341,8 @@ export function ShieldGrid({ rs }: { rs: ReinforcementState }) {
   const [openId, setOpenId] = useState<string | null>(null);
   const ctx: BadgeMetricCtx = { rs, events: rs.events };
   const registryIds = new Set(BADGE_REGISTRY.map((d) => d.id));
-  const foreign = Object.entries(rs.badges).filter(([id]) => !registryIds.has(id));
+  // Pins live in the same map but render in their own rack, never as shields.
+  const foreign = Object.entries(rs.badges).filter(([id]) => !registryIds.has(id) && !id.startsWith("pin_"));
 
   return (
     <div className="shieldgrid" onClick={() => setOpenId(null)}>
@@ -381,6 +382,63 @@ export function ShieldGrid({ rs }: { rs: ReinforcementState }) {
           <div className="shname">&nbsp;</div>
         </div>
       )}
+    </div>
+  );
+}
+
+// --- minor marks (pins) ------------------------------------------------------
+// The dense early tier under the shields: small round pins with low bars, so
+// reinforcement arrives in days, not weeks. Descriptive-only, never gating.
+// Awards live in the same badges map under a `pin_` prefix (ratchet + merge
+// semantics for free); repeatable pins show ×N and keep paying as counts grow.
+
+export interface PinDef {
+  id: string;
+  name: string;
+  glyph: string;
+  desc: string;
+  /** Repeatable pins display ×count and re-toast when the count grows. */
+  repeatable?: boolean;
+}
+
+export const PIN_REGISTRY: PinDef[] = [
+  { id: "pin_first_close", name: "Starter", glyph: "✅", desc: "Close your first task." },
+  { id: "pin_closer", name: "Closer", glyph: "📦", desc: "Every 10 tasks closed adds ×1.", repeatable: true },
+  { id: "pin_first_frog", name: "Frog Eater", glyph: "🐸", desc: "Close your first 🔥 task." },
+  { id: "pin_frog_five", name: "Frog Plate", glyph: "🍽️", desc: "Every 5 frogs closed adds ×1.", repeatable: true },
+  { id: "pin_sprint_trio", name: "Warmed Up", glyph: "⏱️", desc: "Finish three sprints, lifetime." },
+  { id: "pin_first_frog_sprint", name: "First Bite", glyph: "🎯", desc: "Sprint on the oldest frog once." },
+  { id: "pin_good_day", name: "Good Day", glyph: "🌞", desc: "Close three tasks in one day." },
+  { id: "pin_century", name: "Century", glyph: "⚡", desc: "Every 100 ⚡ earned adds ×1.", repeatable: true },
+  { id: "pin_first_step", name: "Step One", glyph: "🪜", desc: "Check off your first checklist step." },
+  { id: "pin_first_hold", name: "Parked", glyph: "⏸️", desc: "Hold a task with a return date." },
+  { id: "pin_placed", name: "Placed", glyph: "🗓️", desc: "Give a task a planned day." },
+  { id: "pin_clean_pen", name: "Clean Pen", glyph: "🧺", desc: "Triage Intake down to empty." },
+];
+
+export function pinById(id: string): PinDef | undefined {
+  return PIN_REGISTRY.find((p) => p.id === id);
+}
+
+/** The pin rack — small wins, densely spaced, above the shields. */
+export function PinStrip({ rs }: { rs: ReinforcementState }) {
+  return (
+    <div className="pinstrip">
+      {PIN_REGISTRY.map((pin) => {
+        const award = rs.badges[pin.id];
+        const n = award?.count ?? 0;
+        return (
+          <span
+            key={pin.id}
+            className={`pin ${award ? "earned" : ""}`}
+            title={`${pin.name} — ${pin.desc}${award ? " ✓" : ""}`}
+          >
+            <span className="pg">{pin.glyph}</span>
+            <span className="pn">{pin.name}</span>
+            {award && pin.repeatable && n > 1 && <span className="px">×{n}</span>}
+          </span>
+        );
+      })}
     </div>
   );
 }

@@ -190,6 +190,7 @@ export type Action =
   | { type: "setBoardCapacity"; capacity: number }
   | { type: "setWeeklyHours"; hours: number }
   | { type: "addTask"; projectId: string; title: string; urgency?: Urgency; due?: string; estimateMinutes?: number }
+  | { type: "setColor"; projectId: string; color: string }
   | { type: "toggleTask"; projectId: string; taskId: string }
   | { type: "updateTask"; projectId: string; taskId: string; patch: Partial<Task> }
   | { type: "deleteTask"; projectId: string; taskId: string }
@@ -242,6 +243,8 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case "renameProject":
       return mapProject(state, action.projectId, (p) => ({ ...p, name: action.name.trim() || p.name }));
+    case "setColor":
+      return mapProject(state, action.projectId, (p) => ({ ...p, color: action.color || p.color }));
     case "setCapacity":
       return mapProject(state, action.projectId, (p) => ({ ...p, capacity: Math.max(1, action.capacity) }));
     case "deleteProject":
@@ -511,6 +514,7 @@ export function reducer(state: AppState, action: Action): AppState {
         due: candidate.due,
         estimateMinutes: candidate.estimateMinutes,
         link: candidate.link,
+        from: candidate.from && candidate.from !== "Imported" ? candidate.from : undefined,
         source: "email",
       });
       return {
@@ -677,6 +681,50 @@ export interface PlanItem {
 }
 
 const URGENCY_RANK: Record<Urgency, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+
+/**
+ * Display order for a box's open tasks — everywhere a task list renders.
+ * Red first (urgent, then high), then due date (undated last), then the
+ * stored board order. Stable: ties keep their stored positions, so the
+ * list doesn't reshuffle under the eye between syncs.
+ */
+export function sortTasksForDisplay(tasks: Task[]): Task[] {
+  return tasks
+    .map((t, i) => ({ t, i }))
+    .sort((a, b) => {
+      const u = URGENCY_RANK[a.t.urgency] - URGENCY_RANK[b.t.urgency];
+      if (u !== 0) return u;
+      const ad = a.t.due ?? "9999-99-99";
+      const bd = b.t.due ?? "9999-99-99";
+      if (ad !== bd) return ad < bd ? -1 : 1;
+      return a.i - b.i;
+    })
+    .map((x) => x.t);
+}
+
+/**
+ * Quick-find across the whole board: title, notes, and project name.
+ * Open tasks rank above done/held; earlier title hits rank above later ones.
+ */
+export function searchTasks(state: AppState, query: string, limit = 10): PlanItem[] {
+  const q = query.trim().toLowerCase();
+  if (q.length < 2) return [];
+  const scored: Array<{ item: PlanItem; score: number }> = [];
+  for (const project of state.projects) {
+    const pHit = project.name.toLowerCase().includes(q);
+    for (const task of project.tasks) {
+      const ti = task.title.toLowerCase().indexOf(q);
+      const ni = (task.notes ?? "").toLowerCase().indexOf(q);
+      if (ti < 0 && ni < 0 && !pHit) continue;
+      let score = ti >= 0 ? ti : ni >= 0 ? 400 + ni : 800;
+      if (task.done) score += 2000; // findable, but below live work
+      if (task.held) score += 1000;
+      scored.push({ item: { task, project }, score });
+    }
+  }
+  scored.sort((a, b) => a.score - b.score);
+  return scored.slice(0, limit).map((s) => s.item);
+}
 
 /**
  * Build today's plan: open tasks that are overdue, due soon, urgent, or

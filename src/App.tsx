@@ -29,6 +29,7 @@ import {
   normalizeState,
   reducer,
   saveState,
+  searchTasks,
   taskMinutes,
   uid,
   useStore,
@@ -43,8 +44,10 @@ import {
   loadReinforcement,
   reinforcementReducer,
   saveReinforcement,
+  useReinforcement,
 } from "./reinforcement";
 import { RankRail } from "./components/RankRail";
+import { BADGE_REGISTRY, pinById } from "./components/Heraldry";
 import type { AppState, Project, Urgency } from "./types";
 
 const UI_VERSION_KEY = "viz-org-ui";
@@ -334,6 +337,83 @@ function untilLabel(ms: number): { clock: string; approx: string } {
   return { clock, approx };
 }
 
+/** Quick-find: type anywhere ("/" focuses it), matches titles, notes, and box
+ * names across the whole board — done and held included, labeled — and opens
+ * the Task Sheet. Finding a task should never require knowing its box. */
+function SearchBox({ onOpenTask }: { onOpenTask: (projectId: string, taskId: string) => void }) {
+  const { state } = useStore();
+  const [q, setQ] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      const el = document.activeElement;
+      const typing = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement;
+      if (e.key === "/" && !typing) {
+        e.preventDefault();
+        inputRef.current?.focus();
+      }
+    };
+    const away = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setQ("");
+    };
+    document.addEventListener("keydown", key);
+    document.addEventListener("mousedown", away);
+    return () => {
+      document.removeEventListener("keydown", key);
+      document.removeEventListener("mousedown", away);
+    };
+  }, []);
+
+  const hits = searchTasks(state, q);
+  return (
+    <div className="search3" ref={wrapRef}>
+      <input
+        ref={inputRef}
+        value={q}
+        placeholder="Find a task…  ( / )"
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setQ("");
+            (e.target as HTMLInputElement).blur();
+          }
+          if (e.key === "Enter" && hits.length) {
+            onOpenTask(hits[0].project.id, hits[0].task.id);
+            setQ("");
+          }
+        }}
+      />
+      {q.trim().length >= 2 && (
+        <div className="searchpop">
+          {hits.map(({ project, task }) => (
+            <div
+              key={task.id}
+              className="searchhit"
+              onClick={() => {
+                onOpenTask(project.id, task.id);
+                setQ("");
+              }}
+            >
+              <span className="shdot" style={{ background: project.color }} />
+              <span className={`sht ${task.done ? "dn" : ""}`}>
+                {task.heavy ? "🔥 " : ""}
+                {task.title}
+              </span>
+              <span className="shm">
+                {project.name}
+                {task.done ? " · ✓ done" : task.held ? " · ⏸ held" : task.due ? ` · due ${task.due.slice(5)}` : ""}
+              </span>
+            </div>
+          ))}
+          {!hits.length && <div className="searchhit none">No matches on the board.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Compact header chip: at a glance, is my work reaching the cloud? Clicking
  * forces a sync. Quiet when synced; loud only when it matters. */
 function SyncPill() {
@@ -416,6 +496,7 @@ function SyncBanner() {
 
 function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggleVersion: () => void }) {
   const { state, dispatch } = useStore();
+  const { rs } = useReinforcement();
   const [tab, setTab] = useState<V3Tab>("board");
   const [projectView, setProjectView] = useState<string | null>(null);
   const [sheet, setSheet] = useState<{ projectId: string; taskId: string } | null>(null);
@@ -434,6 +515,30 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 3400);
   }, []);
+
+  // Celebrate awards the moment they land: a new pin/badge (or a repeatable
+  // pin's count growing) gets a toast. The first paint only baselines — no
+  // retroactive fanfare for history.
+  const prevAwards = useRef<Record<string, { tier?: number; count?: number }> | null>(null);
+  useEffect(() => {
+    const prev = prevAwards.current;
+    prevAwards.current = Object.fromEntries(
+      Object.entries(rs.badges).map(([id, a]) => [id, { tier: a.tier, count: a.count }]),
+    );
+    if (!prev) return;
+    for (const [id, a] of Object.entries(rs.badges)) {
+      const before = prev[id];
+      const pin = pinById(id);
+      if (!before) {
+        if (pin) notify(`📍 Mark earned — ${pin.glyph} ${pin.name}`);
+        else notify(`🛡️ Badge earned — ${BADGE_REGISTRY.find((d) => d.id === id)?.name ?? a.name ?? "a new shield"}`);
+      } else if (pin?.repeatable && (a.count ?? 0) > (before.count ?? 0)) {
+        notify(`📍 ${pin.glyph} ${pin.name} ×${a.count}`);
+      } else if ((a.tier ?? 0) > (before.tier ?? 0)) {
+        notify(`🛡️ ${BADGE_REGISTRY.find((d) => d.id === id)?.name ?? id} leveled up`);
+      }
+    }
+  }, [rs.badges, notify]);
 
   // A board CAS conflict adopted the other device's newer copy (the board has
   // no field merge yet) — tell the user their very last edit may need redoing.
@@ -495,6 +600,7 @@ function WorkspaceV3({ version, onToggleVersion }: { version: UiVersion; onToggl
           <div className="sub">the week as one bounded field — boxes are hours, stripes are tasks</div>
         </div>
         <div className="sp" />
+        <SearchBox onOpenTask={openTask} />
         <SyncPill />
         <RankRail />
         <button className="btn" onClick={() => setAddOpen(true)}>

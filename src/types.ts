@@ -24,6 +24,9 @@ export interface Task {
   firstStep?: string;
   /** Deep link back to the source (e.g. the email this came from). */
   link?: string;
+  /** Who/where it came from — the email sender line, kept through filing so
+   * the Task Sheet can show a reply address. */
+  from?: string;
   /** Hidden from "Today" until this date (yyyy-mm-dd) — a soft snooze that
    * doesn't change the real due date. */
   snoozeUntil?: string;

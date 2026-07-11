@@ -20,7 +20,7 @@ import {
   DOUBLER_PAY,
   SPRINT_PAY,
 } from "../reinforcement";
-import { GrowthStrip, ShieldGrid } from "./Heraldry";
+import { GrowthStrip, PinStrip, ShieldGrid } from "./Heraldry";
 import type { Task, Project } from "../types";
 
 // The v3 Rewards tab under the ratified reinforcement layer: the slim rank
@@ -235,6 +235,11 @@ export function RewardsV3({
         </div>
 
         {/* --- the badge case --- */}
+        <div className="card3">
+          <h4>Marks</h4>
+          <p className="recsub">small wins, densely spaced — repeatable ones keep counting up</p>
+          <PinStrip rs={rs} />
+        </div>
         <div className="card3">
           <h4>Badges</h4>
           <p className="recsub">tap a badge to see what it takes — some level up as you go</p>

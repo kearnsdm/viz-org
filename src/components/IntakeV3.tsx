@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useStore } from "../store";
+import { uid, useStore } from "../store";
 import { useSync } from "../sync";
 
 // v3 Intake (formerly "Email Intake" — it holds jotted items, not just email).
@@ -12,6 +12,19 @@ export function IntakeV3() {
   const [picks, setPicks] = useState<Record<string, string>>({});
   const [checking, setChecking] = useState(false);
   const [checkNote, setCheckNote] = useState<string | null>(null);
+  const [jot, setJot] = useState("");
+
+  // Jot a task right here — it lands as a candidate like everything else
+  // (nothing skips triage): pick its box below and file it.
+  const addJot = () => {
+    const title = jot.trim();
+    if (!title) return;
+    dispatch({
+      type: "pullEmail",
+      candidates: [{ id: uid("jot"), title, urgency: "normal", from: "Jotted in the app" }],
+    });
+    setJot("");
+  };
 
   const admin = state.projects.find((p) => p.isAdmin) ?? state.projects[0];
 
@@ -38,6 +51,19 @@ export function IntakeV3() {
         )}
       </div>
       {checkNote && <div className="hint">{checkNote}</div>}
+      <div className="jotrow">
+        <input
+          value={jot}
+          placeholder="Jot a task… (Enter drops it into the pen below)"
+          onChange={(e) => setJot(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") addJot();
+          }}
+        />
+        <button className="btn pri" onClick={addJot} disabled={!jot.trim()}>
+          + Add
+        </button>
+      </div>
       <div style={{ marginTop: 10 }}>
         {state.inbox.length ? (
           state.inbox.map((c) => {

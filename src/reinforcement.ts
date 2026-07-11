@@ -851,5 +851,38 @@ export function evaluateBadges(
 
   ratchet("builder", creditsRedeemed(rs) >= 1 || (board.game?.creditsRedeemed ?? 0) >= 1);
 
+  // --- minor marks (pins) — the dense early reinforcement tier -------------
+  // Low bars on purpose: the shields' criteria are weeks-scale, and a schedule
+  // that pays nothing for weeks extinguishes the behavior it's meant to build.
+  // Pins are frequent, small, descriptive-only; they share the badges map (and
+  // its ratchet + merge semantics) under a `pin_` prefix. Repeatable pins
+  // carry a count, so they keep paying as the numbers grow.
+  const heavyIds = new Set<string>();
+  for (const p of board.projects) for (const t of p.tasks) if (t.heavy) heavyIds.add(t.id);
+  const closeCount = closes.length;
+  const frogCloses = closes.filter((c) => c.taskId && heavyIds.has(c.taskId)).length;
+  const steps = eff.filter((e) => e.kind === "step").length;
+  const frogSprints = eff.filter((e) => e.kind === "frogBonus").length;
+  const earned = eff.filter((e) => e.kind !== "seed" && e.delta > 0).reduce((s, e) => s + e.delta, 0);
+  const closesByDay = new Map<string, number>();
+  for (const c of closes) closesByDay.set(dayKey(c.at), (closesByDay.get(dayKey(c.at)) ?? 0) + 1);
+  const bestCloseDay = closesByDay.size ? Math.max(...closesByDay.values()) : 0;
+  const anyHeld = board.projects.some((p) => p.tasks.some((t) => t.held));
+  const anyPlanned = board.projects.some((p) => p.tasks.some((t) => !!t.scheduledFor));
+  const intakeCleared = board.inbox.length === 0 && (board.seenCandidateIds?.length ?? 0) > 0;
+
+  ratchet("pin_first_close", closeCount >= 1);
+  ratchet("pin_closer", closeCount >= 10, undefined, Math.floor(closeCount / 10));
+  ratchet("pin_first_frog", frogCloses >= 1);
+  ratchet("pin_frog_five", frogCloses >= 5, undefined, Math.floor(frogCloses / 5));
+  ratchet("pin_sprint_trio", sprints >= 3);
+  ratchet("pin_first_frog_sprint", frogSprints >= 1);
+  ratchet("pin_good_day", bestCloseDay >= 3);
+  ratchet("pin_century", earned >= 100, undefined, Math.floor(earned / 100));
+  ratchet("pin_first_step", steps >= 1);
+  ratchet("pin_first_hold", anyHeld);
+  ratchet("pin_placed", anyPlanned);
+  ratchet("pin_clean_pen", intakeCleared);
+
   return changed ? out : null;
 }

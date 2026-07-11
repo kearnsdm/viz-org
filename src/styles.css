@@ -1768,12 +1768,13 @@ input[type="checkbox"] {
 .v3 .board-frame {
   /* Fill the screen: the frame takes whatever vertical room the viewport has
    * after the header/caption chrome (so it always fits without scrolling),
-   * and the width follows at the fixed 1.6:1 rectangle. On a large monitor
-   * the board grows with it; the shape — the bounded time rectangle — never
-   * changes, and margin-inline keeps it centered off the edges. */
-  --board-h: clamp(460px, calc(100vh - 250px), 1300px);
+   * and the width follows at the fixed 1.75:1 rectangle — widened a notch so
+   * the field breathes. On a large monitor the board grows with it; the shape
+   * — the bounded time rectangle — never changes, and margin-inline keeps it
+   * centered off the edges. */
+  --board-h: clamp(460px, calc(100vh - 240px), 1300px);
   height: var(--board-h);
-  width: min(100%, calc(var(--board-h) * 1.6));
+  width: min(100%, calc(var(--board-h) * 1.75));
   margin-inline: auto;
 }
 .v3 .box {
@@ -3397,5 +3398,299 @@ input[type="checkbox"] {
   .v3 .board-frame {
     --board-h: min(68vh, 460px);
     width: 100%;
+  }
+}
+
+/* ============================================================================
+   Installment 5 — daily-use pass: quick-find, add-in-place, done-fold,
+   box colors, source links, bigger notes, the pin rack, the sprint task card.
+   ========================================================================== */
+
+/* --- quick-find (header) --- */
+.v3 .search3 {
+  position: relative;
+  flex: 0 1 240px;
+  min-width: 140px;
+}
+.v3 .search3 input {
+  width: 100%;
+  font: inherit;
+  font-size: 12px;
+  color: var(--hi);
+  background: var(--panel);
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 6px 10px;
+  outline: none;
+}
+.v3 .search3 input:focus {
+  border-color: var(--acc);
+}
+.v3 .searchpop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(430px, 92vw);
+  background: #191c22;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  padding: 6px;
+  z-index: 60;
+  box-shadow: 0 12px 34px -12px rgba(0, 0, 0, 0.7);
+}
+.v3 .searchhit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--mid);
+  cursor: pointer;
+}
+.v3 .searchhit:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.v3 .searchhit.none {
+  color: var(--lo);
+  cursor: default;
+}
+.v3 .searchhit .shdot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+}
+.v3 .searchhit .sht {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hi);
+}
+.v3 .searchhit .sht.dn {
+  color: var(--lo);
+  text-decoration: line-through;
+}
+.v3 .searchhit .shm {
+  margin-left: auto;
+  flex: none;
+  font-size: 10.5px;
+  color: var(--lo);
+  padding-left: 8px;
+}
+
+/* --- add-a-task row (project screen) --- */
+.v3 .addrow3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 2px;
+  border-top: 1px dashed var(--line2);
+  margin-top: 2px;
+}
+.v3 .addrow3 .addplus {
+  color: var(--lo);
+  font-weight: 700;
+}
+.v3 .addrow3 input {
+  flex: 1;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--hi);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.v3 .addrow3 input::placeholder {
+  color: var(--lo);
+}
+
+/* --- the done-fold header --- */
+.v3 .sec.donesec {
+  cursor: pointer;
+  user-select: none;
+}
+.v3 .sec.donesec:hover {
+  color: var(--mid);
+}
+
+/* --- box color swatches --- */
+.v3 .swrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 4px 0 2px;
+}
+.v3 .sw {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+  padding: 0;
+  outline-offset: 2px;
+}
+.v3 .sw:hover {
+  transform: scale(1.12);
+}
+.v3 .sw.on {
+  outline: 2px solid var(--hi);
+}
+
+/* --- source / provenance row (Task Sheet + sprint card) --- */
+.v3 .srcrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 10px 0 2px;
+}
+.v3 .srcbtn {
+  text-decoration: none;
+  font-size: 11.5px;
+  padding: 5px 9px;
+  color: #a9b2ff;
+  display: inline-block;
+}
+.v3 .srcbtn:hover {
+  border-color: var(--acc);
+}
+.v3 .srcfrom {
+  font-size: 11.5px;
+  color: var(--lo);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 260px;
+}
+.v3 .notelinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: -4px 0 10px;
+}
+
+/* --- bigger, calmer notes --- */
+.v3 .fld .notes3 {
+  min-height: 110px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+/* --- Intake jot row --- */
+.v3 .jotrow {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.v3 .jotrow input {
+  flex: 1;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--hi);
+  background: var(--panel);
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  padding: 7px 10px;
+  outline: none;
+}
+.v3 .jotrow input:focus {
+  border-color: var(--acc);
+}
+
+/* --- the pin rack (minor marks) --- */
+.v3 .pinstrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.v3 .pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--lo);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--line2);
+  border-radius: 999px;
+  padding: 4px 10px 4px 6px;
+  opacity: 0.55;
+  filter: grayscale(0.9);
+}
+.v3 .pin.earned {
+  opacity: 1;
+  filter: none;
+  color: var(--mid);
+  border-color: rgba(224, 172, 51, 0.45);
+  background: rgba(224, 172, 51, 0.07);
+}
+.v3 .pin .pg {
+  font-size: 13px;
+}
+.v3 .pin .pn {
+  font-weight: 600;
+}
+.v3 .pin .px {
+  font-weight: 700;
+  color: #e0ac33;
+}
+
+/* --- the sprint task card --- */
+.v3 .focustask {
+  border: 1px solid var(--line2);
+  border-radius: 9px;
+  overflow: hidden;
+  margin: 10px 0;
+  background: rgba(255, 255, 255, 0.02);
+}
+.v3 .focustask .fth {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  background: var(--c);
+  color: var(--ct);
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 5px 10px;
+}
+.v3 .focustask .fthm {
+  margin-left: auto;
+  font-weight: 600;
+  opacity: 0.85;
+}
+.v3 .focustask .ftt {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--hi);
+  padding: 9px 10px 2px;
+}
+.v3 .focustask .ftm {
+  font-size: 11.5px;
+  color: var(--lo);
+  padding: 0 10px 8px;
+}
+.v3 .focustask .ftlinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 0 10px 8px;
+}
+.v3 .focustask .ftsteps {
+  border-top: 1px solid var(--line);
+  padding: 4px 10px 6px;
+}
+.v3 .focustask .ftnotes {
+  border-top: 1px solid var(--line);
+  padding: 8px 10px 9px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--mid);
+  white-space: pre-wrap;
+  max-height: 150px;
+  overflow: auto;
+}
+@media (max-width: 900px) {
+  .v3 .search3 {
+    flex-basis: 150px;
   }
 }

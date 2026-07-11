@@ -22,6 +22,44 @@ import type { Task, Urgency } from "../types";
 const DURATIONS = [15, 30, 45, 60, 90, 120, 180, 240];
 const URGENCIES: Urgency[] = ["low", "normal", "high", "urgent"];
 
+/** Human label for a source deep-link, by host. */
+export function linkLabel(url: string): string {
+  try {
+    const h = new URL(url).hostname;
+    if (h.includes("mail.google")) return "Open the email (Gmail)";
+    if (h.includes("outlook.office") || h.includes("outlook.live")) return "Open the email (Outlook)";
+    if (h.includes("docs.google")) return "Open the Google Doc";
+    if (h.includes("sheets.google")) return "Open the Google Sheet";
+    if (h.includes("drive.google")) return "Open in Google Drive";
+    if (h.includes("zoom.us")) return "Open the Zoom link";
+    return `Open ${h.replace(/^www\./, "")}`;
+  } catch {
+    return "Open the source link";
+  }
+}
+
+/** Pull anything actionable out of the notes: URLs and email addresses become
+ * one-tap chips under the notes box, so "the doc link is buried in the notes"
+ * stops being a thing. */
+export function extractActionables(notes: string | undefined): Array<{ href: string; label: string }> {
+  if (!notes) return [];
+  const out: Array<{ href: string; label: string }> = [];
+  const seen = new Set<string>();
+  for (const m of notes.match(/https?:\/\/[^\s)>\]"']+/g) ?? []) {
+    const href = m.replace(/[.,;:]+$/, "");
+    if (seen.has(href)) continue;
+    seen.add(href);
+    out.push({ href, label: linkLabel(href) });
+  }
+  for (const m of notes.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g) ?? []) {
+    const href = `mailto:${m}`;
+    if (seen.has(href)) continue;
+    seen.add(href);
+    out.push({ href, label: `✉ ${m}` });
+  }
+  return out.slice(0, 6);
+}
+
 export function TaskSheet({
   projectId,
   taskId,
@@ -167,6 +205,18 @@ export function TaskSheet({
           </button>
         </div>
 
+        {/* Provenance — where this task came from, with the way back. */}
+        {(task.link || task.from) && (
+          <div className="srcrow">
+            {task.link && (
+              <a className="btn srcbtn" href={task.link} target="_blank" rel="noreferrer">
+                ↗ {linkLabel(task.link)}
+              </a>
+            )}
+            {task.from && <span className="srcfrom" title={task.from}>from {task.from}</span>}
+          </div>
+        )}
+
         {stream && comps.length > 0 && (
           <>
             <div className="sec">
@@ -258,13 +308,23 @@ export function TaskSheet({
           </button>
         </div>
         <label className="fld">
-          Notes
+          Notes — clean and simple; Claude's context lands here too
           <textarea
-            rows={2}
+            className="notes3"
+            rows={6}
             defaultValue={task.notes ?? ""}
             onBlur={(e) => patch({ notes: e.target.value || undefined })}
           />
         </label>
+        {extractActionables(task.notes).length > 0 && (
+          <div className="notelinks">
+            {extractActionables(task.notes).map((l) => (
+              <a key={l.href} className="btn srcbtn" href={l.href} target="_blank" rel="noreferrer">
+                ↗ {l.label}
+              </a>
+            ))}
+          </div>
+        )}
         <label className="heavy-row">
           <input
             type="checkbox"

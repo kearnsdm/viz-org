@@ -6,6 +6,7 @@ import {
   projectDoneMinutes,
   projectHeldMinutes,
   projectWorkMinutes,
+  sortTasksForDisplay,
   spotlightPick,
   taskMinutes,
   useStore,
@@ -175,8 +176,10 @@ function ProjectBoxV3({
   const { streams } = useStreams();
   const { dispatchR } = useReinforcement();
   // Held tasks are parked OFF the board: no stripe, no urgency dot — they
-  // live in the Holding mode until their return date.
-  const open = project.tasks.filter((t) => !t.done && !t.held);
+  // live in the Holding mode until their return date. Stripes render red-first
+  // (urgent → high → due date → stored order), so the top of every box is
+  // what needs attention.
+  const open = sortTasksForDisplay(project.tasks.filter((t) => !t.done && !t.held));
   const openMin = projectWorkMinutes(project);
   const doneMin = projectDoneMinutes(project);
   const alloc = projectAllocMinutes(project) || openMin;
@@ -449,8 +452,8 @@ export function BoardV3({ onOpenProject, onOpenTask, onStartSprint, onAddProject
         {rects.map((r) => {
           // Gutter half-width: boxes inset by G on each side, so adjacent tiles
           // are separated by 2·G of dark frame — the strongest, least-cluttered
-          // section separator.
-          const G = 3;
+          // section separator. Widened a step for more visual air between boxes.
+          const G = 4;
           const pos = {
             left: r.x + G,
             top: r.y + G,
