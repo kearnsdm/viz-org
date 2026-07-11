@@ -16,4 +16,5 @@ dist-ssr
 # viz-relay secrets / runtime (never commit)
 server/viz-relay-config.php
 server/viz-relay-rate.json
+server/.viz-relay-key
 server/viz-data.json
