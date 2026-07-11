@@ -93,6 +93,13 @@ export function IntakeV3() {
                 >
                   → File
                 </button>{" "}
+                <button
+                  className="btn"
+                  title="It was real work, but it's finished (or stale) — file it into the picked box's done list, off the live board, paying nothing"
+                  onClick={() => dispatch({ type: "fileCandidate", candidateId: c.id, projectId: pick, asDone: true })}
+                >
+                  ✓ Already done
+                </button>{" "}
                 <button className="btn" onClick={() => dispatch({ type: "dismissCandidate", candidateId: c.id })}>
                   ✕ Not a task
                 </button>

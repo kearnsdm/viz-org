@@ -218,7 +218,7 @@ export type Action =
   | { type: "unlockBadge"; badgeId: string }
   | { type: "moveTask"; taskId: string; fromProjectId: string; toProjectId: string }
   | { type: "pullEmail"; candidates: CandidateTask[] }
-  | { type: "fileCandidate"; candidateId: string; projectId: string }
+  | { type: "fileCandidate"; candidateId: string; projectId: string; asDone?: boolean }
   | { type: "dismissCandidate"; candidateId: string }
   | { type: "replaceState"; state: AppState }
   | { type: "clearBoard" }
@@ -508,6 +508,10 @@ export function reducer(state: AppState, action: Action): AppState {
     case "fileCandidate": {
       const candidate = state.inbox.find((c) => c.id === action.candidateId);
       if (!candidate) return state;
+      // asDone = "already done / stale": the task files straight into the
+      // box's done list (category kept, visible in the fold and the Archive)
+      // WITHOUT passing through toggleTask — so no game award and no
+      // reinforcement close event. Backfilled history must never pay points.
       const task = makeTask(candidate.title, {
         notes: candidate.notes,
         urgency: candidate.urgency,
@@ -515,7 +519,8 @@ export function reducer(state: AppState, action: Action): AppState {
         estimateMinutes: candidate.estimateMinutes,
         link: candidate.link,
         from: candidate.from && candidate.from !== "Imported" ? candidate.from : undefined,
-        source: "email",
+        source: action.asDone ? "backfill" : "email",
+        done: !!action.asDone,
       });
       return {
         ...state,

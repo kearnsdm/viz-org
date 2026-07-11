@@ -387,10 +387,27 @@ export function TaskSheet({
             )}
           </div>
         )}
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
           <button className="btn danger" onClick={del}>
             Delete
           </button>
+          {!task.done && (
+            <button
+              className="btn"
+              title="It was finished before it ever hit the board (or it's gone stale) — mark it done with no points, so the record is right and the score stays honest"
+              onClick={() => {
+                // Straight patch, not toggleTask: no game award, no close
+                // event. Backfilled completions must never pay.
+                patch({ done: true });
+                notify(`✓ ${task.title} — recorded as already done (no points)`, () =>
+                  patch({ done: false }),
+                );
+                onClose();
+              }}
+            >
+              ✓ Already done · no points
+            </button>
+          )}
           <button className="btn" onClick={onClose}>
             Close
           </button>
