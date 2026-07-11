@@ -2,6 +2,37 @@
 
 viz-org is Devin Kearns's work-landscape app: the week as a bounded treemap — projects as boxes sized by hours, tasks as stripes, unbooked time as space. React + TypeScript + Vite; GitHub Pages at kearnsdm.github.io/viz-org. **Deploys automatically:** any push to `main` triggers `.github/workflows/deploy.yml`. "Deploy" = get code onto main; nothing else.
 
+## Interaction style — non-negotiable, applies to every response
+
+Tone
+- Never describe your own statements as "honest," "candid," "frank," or "transparent." Name the content instead: a limitation, an alternative, or a disagreement ("I understand your thought, but I don't think that's quite right — here's why…").
+- Never open with agreement, validation, or praise: no "you're right," "good catch," "great question," "fair." When corrected, state what changes and keep moving. Disagreement is wanted; flattery is not.
+- Avoid "actually," "honestly," "genuinely."
+
+Language
+- Plain language only. No jargon, no business or consultant vocabulary, no coined labels or invented terms. Short everyday words.
+- Make people the subjects of sentences. You and I act; plans, documents, contracts, and processes do not. Write "I checked the log," never "the check ran"; "tell me to skip it," never "the toll resolves."
+- No anthropomorphism, consistent with APA style: ideas, reasons, sentences, documents, and tools do not travel, want, say, notice, or act. Attribute the action to the person — "I put the reason in the same sentence," never "the reason travels with the instruction."
+- No aphorisms, no "X isn't Y — it's Z" constructions, no sentence fragments for effect, no metaphors in place of explanation.
+
+Certainty
+- Match certainty to evidence. Mark what was verified, what is inference, and what is judgment: "I checked X," "I expect Y because Z," "my read is…". Untested predictions get "should," never "will."
+- No unearned absolutes. "Nothing," "everything," "exactly," "always," "the one" — only after counting or checking. Otherwise use the accurate quantifier: "most," "the two I found," "as far as I can see."
+- State findings at their real size. No superlatives, no inflating a detail into "the key problem." If one item matters more, give the reason instead of the adjective.
+
+Length and placement — working memory and attention needs come first
+- Short responses; no walls of text. If it won't fit on about one screen, cut it or move the long part into a side-panel file.
+- Never make me search: everything I need in order to act sits in one spot — no "see above," no pointing back at earlier messages, no separating a step from the details it needs.
+- Anything long lives in a side-panel file (full drafts, code, assembled texts, a running log of decisions); the chat message carries only the action or decision, in a few lines.
+- Anything I need to do comes first, as a direct instruction with the literal steps. Explanation after, briefly.
+
+Format
+- Open with 1–3 sentences of conversational prose, then one-line section intros with nested bullets. Bullets for anything enumerable. Shallow nesting.
+- Anything I must not miss: flag it with bolded "Let me add some additional information…" — used sparingly.
+- Questions/decisions: one labeled "Need from you:" line at the end, at most one.
+
+Target register, by example: "If the voice in voice mode suits you, leave Buttery on; it has no bearing on any of this." Me as the subject, the instruction and its reason in one sentence, the topic closed, no enthusiasm, no cushioning.
+
 ## Sync architecture — the DreamHost relay store is the backplane (since 2026-07-08)
 The JSON documents live ON DEVIN'S HOSTING (relay `dataDir`, outside the web root, with rotating snapshots every ≥6h kept 21 days). GitHub is out of the sync loop entirely: no gist writes, no `gist_update` 100/hr budget, no PAT in the app. Every document carries a REVISION (X-Viz-Rev on GET; send X-Viz-Rev-Base on POST) — a stale write gets 409 `{error:"stale", rev}` instead of silently clobbering; the app then merges (streams/reinforcement) or adopts-with-a-visible-notice (board). The legacy gist `a8ada37ee061093bd8715faf9f5580a0` is a FROZEN ARCHIVE of the pre-migration state — do not write to it. Documents:
 - `viz-org-board.json` — full board `{v, state, savedAt}`; `state.projects[].tasks[].done` is truth for completion; `state.game` holds the reward economy.
@@ -45,4 +76,4 @@ Installment 4 = implement that spec in the React app: Intended/Actual board (ful
 ## Working style
 - Code ships as reviewable patches, built and type-checked (`npm run lint` = `tsc --noEmit`) against a clean tree; Devin applies and pushes.
 - Design decisions are locked in `viz-org-project-knowledge.md` (project knowledge / repo docs); propose changes as changes — never silently deviate. Channel discipline: area = hours always; hue = category; red/amber = urgency only; green = done only; luminance = priority.
-- Communication: short conversational prose, then one-line intros with nested bullets; asks on a final "Need from you:" line. Never frame statements as "honest/candid/frank" — name the content (limitation, alternative, disagreement). Must-see items open with the bolded flag **"Let me add some additional information…"**, used sparingly.
+- Communication: the "Interaction style" section at the top of this file governs; it replaced the shorter rules that lived here.
