@@ -14,10 +14,10 @@
  *
  * Actions (auth: X-Viz-Key header preferred, or ?key= query param):
  *   GET  ?action=ping          -> {ok:true, store:"local"} — connection test
- *   GET  ?action=board|streams|reinforcement|analysis|inbox
+ *   GET  ?action=board|streams|reinforcement|analysis|inbox|chat
  *        -> the file's JSON (or a sensible empty default), with the current
  *           revision in the X-Viz-Rev response header
- *   POST ?action=board|streams|reinforcement|analysis|inbox
+ *   POST ?action=board|streams|reinforcement|analysis|inbox|chat
  *        -> whole-file replace with the posted JSON body (stored VERBATIM
  *           after validation — PHP re-encoding would corrupt {} to []).
  *           OPTIMISTIC CONCURRENCY: send X-Viz-Rev-Base with the revision you
@@ -25,6 +25,10 @@
  *           — re-pull, merge, retry. Omit the header to force (legacy/chat).
  *   POST ?action=append        -> body {candidates:[CandidateTask,...]};
  *                                 merges into the inbox, deduped by id
+ *   POST ?action=chat-post     -> body {from:"board"|"claude", text, taskId?,
+ *                                 taskTitle?, replyTo?}; the relay assigns id +
+ *                                 timestamp and appends to the chat document
+ *                                 (callers never read-modify-write this file)
  *   POST ?action=migrate-from-gist
  *        -> one-time cutover: pulls all five files from the configured gist
  *           into local storage. Refuses if a board already exists here
@@ -132,6 +136,7 @@ const DOCS = [
   'reinforcement' => 'viz-org-reinforcement.json',
   'analysis'      => 'viz-org-analysis.json',
   'inbox'         => 'viz-org-inbox.json',
+  'chat'          => 'viz-org-chat.json',
 ];
 
 /** Empty-store defaults, matching what the app/chat expect from day one. */
@@ -141,7 +146,12 @@ const DOC_DEFAULTS = [
   'reinforcement' => '{"v":1,"kind":"viz-org-reinforcement"}',
   'analysis'      => '{"v":1,"kind":"viz-org-analysis"}',
   'inbox'         => '[]',
+  'chat'          => '{"v":1,"kind":"viz-org-chat","messages":[]}',
 ];
+
+/** Chat lane bounds: oldest messages are trimmed past the cap. */
+const CHAT_MAX_MESSAGES = 500;
+const CHAT_MAX_TEXT_BYTES = 8000;
 
 /** Snapshot cadence + retention. */
 const SNAP_MIN_INTERVAL = 6 * 3600;
@@ -359,6 +369,54 @@ if ($method === 'POST' && $action === 'append') {
   if ($w['ok']) header('X-Viz-Rev: ' . $w['rev']);
   echo json_encode($w['ok']
     ? ['ok' => true, 'added' => count($valid), 'inbox' => count($merged), 'rev' => $w['rev']]
+    : ['error' => 'write failed']);
+  exit;
+}
+
+// POST ?action=chat-post — append ONE message to the chat document.
+// Both the board and Claude sessions call this; the relay assigns the id and
+// timestamp, so callers never read-modify-write the file and cannot race
+// each other. Consumers poll ?action=ping and re-fetch chat when its rev moves.
+if ($method === 'POST' && $action === 'chat-post') {
+  $j = readJsonBody();
+  $from = is_array($j) ? ($j['from'] ?? null) : null;
+  $text = is_array($j) ? ($j['text'] ?? null) : null;
+  if (!in_array($from, ['board', 'claude'], true)) {
+    http_response_code(400);
+    echo json_encode(['error' => "expected from: 'board' or 'claude'"]);
+    exit;
+  }
+  if (!is_string($text) || trim($text) === '' || strlen($text) > CHAT_MAX_TEXT_BYTES) {
+    http_response_code(400);
+    echo json_encode(['error' => 'text must be a non-empty string of at most ' . CHAT_MAX_TEXT_BYTES . ' bytes']);
+    exit;
+  }
+  $msg = [
+    'id'   => 'm' . base_convert((string) (int) (microtime(true) * 1000), 10, 36) . bin2hex(random_bytes(2)),
+    'at'   => gmdate('Y-m-d\TH:i:s\Z'),
+    'from' => $from,
+    'text' => $text,
+  ];
+  foreach (['taskId', 'taskTitle', 'replyTo'] as $k) {
+    if (isset($j[$k]) && is_string($j[$k]) && $j[$k] !== '') $msg[$k] = $j[$k];
+  }
+
+  $h = docLock('chat');
+  $cur = docRead('chat');
+  $doc = $cur['content'] !== null ? json_decode($cur['content'], true) : null;
+  if (!is_array($doc) || !isset($doc['messages']) || !is_array($doc['messages'])) {
+    $doc = ['v' => 1, 'kind' => 'viz-org-chat', 'messages' => []];
+  }
+  $doc['messages'][] = $msg;
+  if (count($doc['messages']) > CHAT_MAX_MESSAGES) {
+    $doc['messages'] = array_slice($doc['messages'], -CHAT_MAX_MESSAGES);
+  }
+  docUnlock($h); // docWrite re-locks; the pre-merge lock only shrank the race window
+  $w = docWrite('chat', (string) json_encode($doc, RELAY_JSON), null);
+  http_response_code($w['ok'] ? 200 : 500);
+  if ($w['ok']) header('X-Viz-Rev: ' . $w['rev']);
+  echo json_encode($w['ok']
+    ? ['ok' => true, 'message' => $msg, 'rev' => $w['rev']]
     : ['error' => 'write failed']);
   exit;
 }
